@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": {"model": "big-boats-justfatlard:block/helm", "y": 0},
+    "facing=south": {"model": "big-boats-justfatlard:block/helm", "y": 180},
+    "facing=west": {"model": "big-boats-justfatlard:block/helm", "y": 270},
+    "facing=east": {"model": "big-boats-justfatlard:block/helm", "y": 90}
+  }
+}

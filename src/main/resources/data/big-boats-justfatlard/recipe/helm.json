@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "P": "#minecraft:planks",
+    "S": "minecraft:stick",
+    "I": "minecraft:iron_ingot"
+  },
+  "pattern": [
+    " S ",
+    "SIS",
+    "PPP"
+  ],
+  "result": {
+    "count": 1,
+    "id": "big-boats-justfatlard:helm"
+  }
+}

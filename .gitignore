@@ -1,0 +1,19 @@
+# Gradle
+.gradle/
+build/
+
+# Eclipse
+*.classpath
+*.project
+*.settings/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+out/
+
+# macOS
+.DS_Store
+
+# Runtime
+run/

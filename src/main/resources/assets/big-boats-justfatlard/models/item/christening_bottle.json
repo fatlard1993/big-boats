@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "big-boats-justfatlard:item/christening_bottle"
+  }
+}

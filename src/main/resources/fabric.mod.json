@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "big-boats-justfatlard",
+  "version": "${version}",
+  "name": "Big Boats",
+  "description": "Use a christening bottle to turn blocks into rideable boats!",
+  "authors": [
+    "justfatlard"
+  ],
+  "contact": {
+    "homepage": "",
+    "sources": ""
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "justfatlard.big_boats.BigBoats"
+    ]
+  },
+  "mixins": [
+    "big-boats-justfatlard.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.1",
+    "fabric-api": "*",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "polymer-core": ">=0.15.0",
+    "polymer-resource-pack": ">=0.15.0"
+  }
+}
