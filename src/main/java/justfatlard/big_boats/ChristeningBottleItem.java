@@ -53,7 +53,7 @@ public class ChristeningBottleItem extends Item implements PolymerItem {
 		if (!world.isClient()) {
 			// Create and spawn the projectile
 			ChristeningBottleEntity entity = new ChristeningBottleEntity(world, user, stack);
-			entity.setVelocity(user, user.getPitch(), user.getYaw(), 0.0F, 0.5F, 1.0F);
+			entity.setVelocity(user, user.getPitch(), user.getYaw(), 0.0F, 1.5F, 1.0F);
 			world.spawnEntity(entity);
 		}
 

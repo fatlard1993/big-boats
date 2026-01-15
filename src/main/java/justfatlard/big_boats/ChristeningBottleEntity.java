@@ -23,10 +23,18 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
+import net.minecraft.registry.RegistryKeys;
+import net.minecraft.registry.tag.TagKey;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.World;
 import xyz.nucleoid.packettweaker.PacketContext;
+
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.Queue;
+import java.util.Set;
 
 /**
  * Throwable christening bottle projectile.
@@ -116,7 +124,8 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 	}
 
 	/**
-	 * Searches for a helm block at or adjacent to the given position.
+	 * Searches for a helm block by doing a BFS through connected boatable blocks.
+	 * This allows hitting any part of the ship to christen it.
 	 */
 	private BlockPos findHelmNear(World world, BlockPos pos) {
 		if (pos == null) {
@@ -124,19 +133,72 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 		}
 
 		// Check the hit position first
-		if (world.getBlockState(pos).getBlock() instanceof HelmBlock) {
+		BlockState hitState = world.getBlockState(pos);
+		if (hitState.getBlock() instanceof HelmBlock) {
 			return pos;
 		}
 
-		// Check adjacent positions
-		for (Direction dir : Direction.values()) {
-			BlockPos adjacent = pos.offset(dir);
-			if (world.getBlockState(adjacent).getBlock() instanceof HelmBlock) {
-				return adjacent;
+		// If hit block isn't boatable, check adjacent positions for a starting point
+		TagKey<net.minecraft.block.Block> boatableTag = TagKey.of(
+			RegistryKeys.BLOCK,
+			Identifier.of("big-boats-justfatlard", "boatable_blocks")
+		);
+
+		BlockPos startPos = null;
+		if (hitState.isIn(boatableTag) || hitState.getBlock() instanceof HelmBlock) {
+			startPos = pos;
+		} else {
+			// Check adjacent blocks for a boatable block to start from
+			for (Direction dir : Direction.values()) {
+				BlockPos adjacent = pos.offset(dir);
+				BlockState adjacentState = world.getBlockState(adjacent);
+				if (adjacentState.getBlock() instanceof HelmBlock) {
+					return adjacent; // Found helm directly adjacent
+				}
+				if (adjacentState.isIn(boatableTag)) {
+					startPos = adjacent;
+					break;
+				}
 			}
 		}
 
-		return null;
+		if (startPos == null) {
+			return null; // No boatable block found nearby
+		}
+
+		// BFS through connected boatable blocks to find the helm
+		Queue<BlockPos> queue = new LinkedList<>();
+		Set<BlockPos> visited = new HashSet<>();
+		queue.add(startPos);
+
+		int maxSearch = 2000; // Same limit as ship detection
+		int searched = 0;
+
+		while (!queue.isEmpty() && searched < maxSearch) {
+			BlockPos current = queue.poll();
+			if (visited.contains(current)) continue;
+			visited.add(current);
+			searched++;
+
+			BlockState state = world.getBlockState(current);
+
+			// Found the helm!
+			if (state.getBlock() instanceof HelmBlock) {
+				return current;
+			}
+
+			// If boatable, continue searching neighbors
+			if (state.isIn(boatableTag)) {
+				for (Direction dir : Direction.values()) {
+					BlockPos neighbor = current.offset(dir);
+					if (!visited.contains(neighbor)) {
+						queue.add(neighbor);
+					}
+				}
+			}
+		}
+
+		return null; // No helm found in connected structure
 	}
 
 	/**
@@ -185,11 +247,11 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 			1.0F, 0.8F
 		);
 
-		// Spawn failure particles
+		// Spawn failure particles (smoke puff)
 		world.spawnParticles(
-			ParticleTypes.SPLASH,
+			ParticleTypes.SMOKE,
 			this.getX(), this.getY(), this.getZ(),
-			15, 0.3, 0.3, 0.3, 0.1
+			10, 0.2, 0.2, 0.2, 0.02
 		);
 
 		// Drop the bottle as an item
@@ -234,9 +296,9 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 			world.setBlockState(worldPos, Blocks.AIR.getDefaultState());
 
 			world.spawnParticles(
-				ParticleTypes.SPLASH,
+				ParticleTypes.HAPPY_VILLAGER,
 				worldPos.getX() + 0.5, worldPos.getY() + 0.5, worldPos.getZ() + 0.5,
-				5, 0.3, 0.3, 0.3, 0.1
+				3, 0.3, 0.3, 0.3, 0.0
 			);
 		}
 

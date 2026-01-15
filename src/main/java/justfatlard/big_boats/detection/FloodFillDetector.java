@@ -18,7 +18,7 @@ import java.util.Set;
  * Detects connected blocks for ship construction using BFS flood-fill algorithm.
  */
 public class FloodFillDetector {
-	public static final int MAX_BLOCKS = 500;
+	public static final int MAX_BLOCKS = 2000;
 	public static final int MIN_BLOCKS = 2; // Helm + at least one other block
 
 	/**
