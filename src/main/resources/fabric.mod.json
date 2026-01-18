@@ -17,6 +17,9 @@
   "entrypoints": {
     "main": [
       "justfatlard.big_boats.BigBoats"
+    ],
+    "client": [
+      "justfatlard.big_boats.client.BigBoatsClient"
     ]
   },
   "mixins": [

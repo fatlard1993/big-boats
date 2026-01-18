@@ -212,8 +212,8 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 				BlockPos adjacent = worldPos.offset(dir);
 				BlockState adjacentState = world.getBlockState(adjacent);
 
-				// Skip air and water
-				if (adjacentState.isAir() || adjacentState.isOf(Blocks.WATER)) {
+				// Skip air, water, and breakable blocks (plants, etc.)
+				if (adjacentState.isAir() || adjacentState.isOf(Blocks.WATER) || isBreakableBlock(adjacentState)) {
 					continue;
 				}
 
@@ -232,6 +232,29 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Checks if a block is breakable by ships (plants, fragile blocks, etc.)
+	 */
+	private boolean isBreakableBlock(BlockState state) {
+		net.minecraft.block.Block block = state.getBlock();
+		if (block instanceof net.minecraft.block.SeagrassBlock
+			|| block instanceof net.minecraft.block.TallSeagrassBlock
+			|| block instanceof net.minecraft.block.KelpBlock
+			|| block instanceof net.minecraft.block.KelpPlantBlock
+			|| block instanceof net.minecraft.block.LilyPadBlock
+			|| block instanceof net.minecraft.block.TallPlantBlock
+			|| block instanceof net.minecraft.block.FlowerBlock
+			|| block instanceof net.minecraft.block.TallFlowerBlock
+			|| block instanceof net.minecraft.block.SugarCaneBlock
+			|| block instanceof net.minecraft.block.VineBlock
+			|| block instanceof net.minecraft.block.SnowBlock
+			|| block instanceof net.minecraft.block.CobwebBlock) {
+			return true;
+		}
+		// Instantly breakable blocks (hardness 0)
+		return state.getHardness(null, null) == 0.0f && !state.isAir();
 	}
 
 	/**
@@ -290,11 +313,9 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 			0.5F, 1.2F
 		);
 
-		// Remove all detected blocks and spawn particles
+		// Spawn particles at block positions
 		for (ShipBlock block : result.blocks()) {
 			BlockPos worldPos = block.relativePos().toWorldPos(helmPos);
-			world.setBlockState(worldPos, Blocks.AIR.getDefaultState());
-
 			world.spawnParticles(
 				ParticleTypes.HAPPY_VILLAGER,
 				worldPos.getX() + 0.5, worldPos.getY() + 0.5, worldPos.getZ() + 0.5,
@@ -303,7 +324,6 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 		}
 
 		// Spawn the multi-block ship entity at helm block corner
-		// Rotation math will rotate around helm center (+0.5, +0.5)
 		MultiBlockShipEntity ship = new MultiBlockShipEntity(
 			world,
 			helmPos.getX(),
@@ -314,10 +334,13 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 		);
 		world.spawnEntity(ship);
 
+		// Initialize ship (stays docked with real blocks until player mounts)
+		ship.initializeShip(helmPos);
+
 		// Notify the player
 		if (this.getOwner() instanceof ServerPlayerEntity player) {
 			player.sendMessage(
-				Text.literal("Ship launched with " + result.blockCount() + " blocks!")
+				Text.literal("Ship launched with " + result.blockCount() + " blocks! Right-click to board.")
 					.formatted(Formatting.GREEN),
 				false
 			);

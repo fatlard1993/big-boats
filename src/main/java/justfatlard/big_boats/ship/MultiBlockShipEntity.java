@@ -26,13 +26,28 @@ import net.minecraft.storage.ReadView;
 import net.minecraft.storage.WriteView;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.DoorBlock;
+import net.minecraft.block.TrapdoorBlock;
+import net.minecraft.block.FenceGateBlock;
+import net.minecraft.block.LadderBlock;
+import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.block.enums.DoubleBlockHalf;
+import net.minecraft.state.property.Properties;
+import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * A multi-block ship entity that can be driven by players.
@@ -67,6 +82,17 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 	// Logical base position (helm corner) - entity orbits around this
 	private double baseX, baseZ;
 
+	// Docking system: real blocks when stationary, virtual when moving
+	private boolean docked = false;
+	private List<BlockPos> dockedBlockPositions = new ArrayList<>();
+
+	// Velocity-based movement for smooth physics
+	private double velocityX = 0;
+	private double velocityZ = 0;
+	private static final double ACCELERATION = 0.008;  // How fast ship speeds up
+	private static final double MAX_SPEED = 0.18;      // Maximum speed
+	private static final double DRAG = 0.98;           // Friction/water drag (0.98 = 2% slowdown per tick)
+
 	public MultiBlockShipEntity(EntityType<?> entityType, World world) {
 		super(entityType, world);
 	}
@@ -89,6 +115,502 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 		this.visualYaw = 0;
 
 		initializeElementHolder();
+	}
+
+	/**
+	 * Initializes the ship after christening.
+	 * Ship starts DOCKED with real blocks still in place - undocks when player mounts.
+	 */
+	public void initializeShip(BlockPos helmPos) {
+		System.out.println("[Ship] initializeShip() called at " + helmPos + ", blocks=" + blocks.size());
+		if (!(this.getEntityWorld() instanceof ServerWorld)) {
+			System.out.println("[Ship] initializeShip() - not server world, returning");
+			return;
+		}
+
+		// Ship starts DOCKED - real blocks remain in place
+		// They will be removed when player mounts and undock() is called
+		docked = true;
+		System.out.println("[Ship] Set docked=true");
+
+		// Record world positions of all blocks for undocking
+		dockedBlockPositions.clear();
+		for (ShipBlock block : blocks) {
+			BlockPos worldPos = helmPos.add(
+				block.relativePos().x(),
+				block.relativePos().y(),
+				block.relativePos().z()
+			);
+			dockedBlockPositions.add(worldPos);
+		}
+
+		// Hide virtual display (real blocks are visible)
+		if (elementHolder != null) {
+			elementHolder.setVisible(false);
+		}
+
+		// Hide collision shulkers (real blocks have collision)
+		for (ShulkerEntity shulker : collisionShulkers) {
+			if (shulker != null) {
+				shulker.setInvisible(true);
+				shulker.setNoGravity(true);
+				shulker.setAiDisabled(true);
+			}
+		}
+		System.out.println("[Ship] initializeShip() complete, dockedBlockPositions=" + dockedBlockPositions.size());
+	}
+
+	/**
+	 * Docks the ship - places real blocks at current position for full interaction.
+	 * Called when no one is driving. Snaps to nearest cardinal direction.
+	 */
+	public void dock() {
+		if (docked || !(this.getEntityWorld() instanceof ServerWorld world)) {
+			return;
+		}
+
+		// Reset velocity when docking
+		velocityX = 0;
+		velocityZ = 0;
+
+		// Snap rotation to nearest 90 degrees (cardinal direction)
+		float snappedYaw = Math.round(visualYaw / 90.0f) * 90.0f;
+		visualYaw = snappedYaw;
+		this.setYaw(snappedYaw);
+
+		// Snap position to block grid
+		baseX = Math.round(baseX);
+		baseZ = Math.round(baseZ);
+
+		float yawRadians = (float) Math.toRadians(snappedYaw);
+		// For cardinal directions, cos/sin will be exactly 0, 1, or -1
+		int cos = (int) Math.round(Math.cos(yawRadians));
+		int sin = (int) Math.round(Math.sin(yawRadians));
+
+		dockedBlockPositions.clear();
+
+		// Calculate block rotation from ship yaw
+		net.minecraft.util.BlockRotation blockRotation = yawToBlockRotation(snappedYaw);
+
+		for (ShipBlock block : blocks) {
+			// Calculate rotated world position (integer math for perfect grid alignment)
+			int relX = block.relativePos().x();
+			int relZ = block.relativePos().z();
+			int rotatedX = relX * cos - relZ * sin;
+			int rotatedZ = relX * sin + relZ * cos;
+
+			BlockPos worldPos = new BlockPos(
+				(int) baseX + rotatedX,
+				(int) this.getY() + block.relativePos().y(),
+				(int) baseZ + rotatedZ
+			);
+
+			// Rotate block state to match ship rotation (for directional blocks like helm)
+			BlockState rotatedState = block.blockState().rotate(blockRotation);
+
+			// Only place if space is air or water
+			BlockState existing = world.getBlockState(worldPos);
+			if (existing.isAir() || existing.isLiquid()) {
+				world.setBlockState(worldPos, rotatedState);
+				dockedBlockPositions.add(worldPos);
+
+				// Restore block entity data if present (for chests, furnaces, signs, etc.)
+				if (block.hasBlockEntityData()) {
+					NbtCompound savedNbt = block.blockEntityData().get();
+
+					// Get the block entity that was auto-created when we set the block state
+					BlockEntity blockEntity = world.getBlockEntity(worldPos);
+
+					if (blockEntity != null) {
+						// For inventory blocks, copy the items directly
+						if (blockEntity instanceof net.minecraft.inventory.Inventory inventory) {
+							// Read items from saved NBT using 1.21.11 codec API
+							var ops = net.minecraft.nbt.NbtOps.INSTANCE;
+							var registryOps = world.getRegistryManager().getOps(ops);
+							savedNbt.getList("Items").ifPresent(itemList -> {
+								for (int slot = 0; slot < inventory.size(); slot++) {
+									inventory.setStack(slot, ItemStack.EMPTY);
+								}
+								for (int i = 0; i < itemList.size(); i++) {
+									itemList.getCompound(i).ifPresent(itemNbt -> {
+										itemNbt.getByte("Slot").ifPresent(slotByte -> {
+											int slot = slotByte & 255;
+											if (slot < inventory.size()) {
+												// Use codec to decode item stack from NBT
+												ItemStack stack = ItemStack.OPTIONAL_CODEC.decode(registryOps, itemNbt)
+													.result()
+													.map(com.mojang.datafixers.util.Pair::getFirst)
+													.orElse(ItemStack.EMPTY);
+												inventory.setStack(slot, stack);
+											}
+										});
+									});
+								}
+							});
+						}
+						blockEntity.markDirty();
+					}
+				}
+			}
+		}
+
+		// Hide virtual display blocks
+		if (elementHolder != null) {
+			elementHolder.setVisible(false);
+		}
+
+		// Remove collision shulkers (real blocks have collision now)
+		// Shulkers always have collision even when invisible, so we must discard them
+		for (ShulkerEntity shulker : collisionShulkers) {
+			if (shulker != null && !shulker.isRemoved()) {
+				shulker.discard();
+			}
+		}
+		collisionShulkers.clear();
+
+		docked = true;
+	}
+
+	/**
+	 * Undocks the ship - removes real blocks, enables virtual display for movement.
+	 * Called when player starts driving. Saves block entity data first.
+	 * Re-detects ship structure to include any blocks added while docked.
+	 */
+	public void undock() {
+		System.out.println("[Ship] undock() called, docked=" + docked + ", dockedBlockPositions=" + dockedBlockPositions.size());
+		if (!docked || !(this.getEntityWorld() instanceof ServerWorld world)) {
+			System.out.println("[Ship] undock() returning early - not docked or not server world");
+			return;
+		}
+
+		// Re-detect ship structure to include any blocks added while docked
+		BlockPos helmWorldPos = new BlockPos((int) baseX, (int) this.getY(), (int) baseZ);
+		rescanShipStructure(world, helmWorldPos);
+
+		// Build mapping from world position to ShipBlock index for block entity data saving
+		float snappedYaw = Math.round(visualYaw / 90.0f) * 90.0f;
+		float yawRadians = (float) Math.toRadians(snappedYaw);
+		int cos = (int) Math.round(Math.cos(yawRadians));
+		int sin = (int) Math.round(Math.sin(yawRadians));
+
+		java.util.Map<BlockPos, Integer> posToBlockIndex = new java.util.HashMap<>();
+		for (int i = 0; i < blocks.size(); i++) {
+			ShipBlock block = blocks.get(i);
+			int relX = block.relativePos().x();
+			int relZ = block.relativePos().z();
+			int rotatedX = relX * cos - relZ * sin;
+			int rotatedZ = relX * sin + relZ * cos;
+
+			BlockPos worldPos = new BlockPos(
+				(int) baseX + rotatedX,
+				(int) this.getY() + block.relativePos().y(),
+				(int) baseZ + rotatedZ
+			);
+			posToBlockIndex.put(worldPos, i);
+		}
+
+		// If dockedBlockPositions is empty (e.g., loaded from old save), recalculate from current position
+		if (dockedBlockPositions.isEmpty()) {
+			System.out.println("[Ship] dockedBlockPositions empty, recalculating from current position");
+			for (BlockPos pos : posToBlockIndex.keySet()) {
+				dockedBlockPositions.add(pos);
+			}
+			System.out.println("[Ship] Recalculated " + dockedBlockPositions.size() + " positions");
+		}
+
+		// Save block entity data and remove all placed blocks
+		for (BlockPos pos : dockedBlockPositions) {
+			BlockState state = world.getBlockState(pos);
+			// Only process if it's still one of our blocks
+			boolean isOurBlock = blocks.stream().anyMatch(b -> b.blockState().getBlock() == state.getBlock());
+			if (isOurBlock) {
+				// Save block entity data before removing (for chests, furnaces, etc.)
+				BlockEntity blockEntity = world.getBlockEntity(pos);
+				if (blockEntity != null) {
+					Integer blockIndex = posToBlockIndex.get(pos);
+					if (blockIndex != null) {
+						NbtCompound nbt = blockEntity.createNbtWithIdentifyingData(world.getRegistryManager());
+						ShipBlock oldBlock = blocks.get(blockIndex);
+						blocks.set(blockIndex, oldBlock.withBlockEntityData(nbt));
+					}
+					// Clear container inventory before removal to prevent item drops
+					if (blockEntity instanceof net.minecraft.inventory.Inventory inventory) {
+						inventory.clear();
+					}
+					// Remove block entity first to prevent drops
+					world.removeBlockEntity(pos);
+				}
+
+				// Use flags to skip drops: Block.NOTIFY_LISTENERS (2) without triggering drops
+				world.setBlockState(pos, net.minecraft.block.Blocks.AIR.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
+			}
+		}
+		dockedBlockPositions.clear();
+
+		// Show virtual display blocks and update their positions
+		if (elementHolder != null) {
+			elementHolder.setVisible(true);
+			// Force position update for display elements
+			float displayYawRadians = (float) Math.toRadians(visualYaw);
+			double playerOffset = 0.5;
+			double basePlayerOffsetX = 0, basePlayerOffsetZ = 0;
+			switch (helmFacing) {
+				case NORTH -> basePlayerOffsetZ = -playerOffset;
+				case SOUTH -> basePlayerOffsetZ = playerOffset;
+				case EAST -> basePlayerOffsetX = playerOffset;
+				case WEST -> basePlayerOffsetX = -playerOffset;
+				default -> {}
+			}
+			double rotatedPlayerX = basePlayerOffsetX * Math.cos(displayYawRadians) - basePlayerOffsetZ * Math.sin(displayYawRadians);
+			double rotatedPlayerZ = basePlayerOffsetX * Math.sin(displayYawRadians) + basePlayerOffsetZ * Math.cos(displayYawRadians);
+			elementHolder.updateRotationWithOffset(displayYawRadians, (float)(-rotatedPlayerX - 0.5), (float)(-rotatedPlayerZ - 0.5));
+		}
+
+		// Respawn collision shulkers (they were discarded when docked)
+		spawnCollisionEntities(world);
+		updateCollisionPositionsWithOffset(baseX, baseZ, (float) Math.toRadians(visualYaw));
+
+		// Update entity position for proper passenger placement
+		double playerOffset = 0.5;
+		double basePlayerOffsetX = 0, basePlayerOffsetZ = 0;
+		float entityYawRadians = (float) Math.toRadians(visualYaw);
+		switch (helmFacing) {
+			case NORTH -> basePlayerOffsetZ = -playerOffset;
+			case SOUTH -> basePlayerOffsetZ = playerOffset;
+			case EAST -> basePlayerOffsetX = playerOffset;
+			case WEST -> basePlayerOffsetX = -playerOffset;
+			default -> {}
+		}
+		double rotatedPlayerX = basePlayerOffsetX * Math.cos(entityYawRadians) - basePlayerOffsetZ * Math.sin(entityYawRadians);
+		double rotatedPlayerZ = basePlayerOffsetX * Math.sin(entityYawRadians) + basePlayerOffsetZ * Math.cos(entityYawRadians);
+		double newEntityX = baseX + 0.5 + rotatedPlayerX;
+		double newEntityZ = baseZ + 0.5 + rotatedPlayerZ;
+		this.setPosition(newEntityX, this.getY(), newEntityZ);
+
+		// Update seat entity position (for player riding)
+		if (seatEntity != null && !seatEntity.isRemoved()) {
+			seatEntity.setPosition(newEntityX, this.getY(), newEntityZ);
+		}
+
+		// Update helm interaction position
+		if (helmInteraction != null && !helmInteraction.isRemoved()) {
+			helmInteraction.setPosition(baseX + 0.5, this.getY(), baseZ + 0.5);
+		}
+
+		docked = false;
+	}
+
+	/**
+	 * Auto-dock on spawn so ship starts with real blocks.
+	 */
+	public void dockOnSpawn() {
+		// Small delay to let the world settle, then dock
+		dock();
+	}
+
+	public boolean isDocked() {
+		return docked;
+	}
+
+	/**
+	 * Absorbs additional blocks into the ship (e.g., small docks connected at undock time).
+	 * Removes the blocks from the world and adds them to the ship's virtual display.
+	 * Applies inverse rotation to convert world-relative positions to ship-local positions.
+	 */
+	private void absorbBlocks(ServerWorld world, List<ShipBlock> newBlocks) {
+		// Get current rotation for inverse transformation
+		float snappedYaw = Math.round(visualYaw / 90.0f) * 90.0f;
+		float yawRadians = (float) Math.toRadians(snappedYaw);
+		int cos = (int) Math.round(Math.cos(yawRadians));
+		int sin = (int) Math.round(Math.sin(yawRadians));
+
+		List<ShipBlock> localizedBlocks = new ArrayList<>();
+
+		for (ShipBlock block : newBlocks) {
+			// The block's relativePos is in WORLD space (relative to helm world position)
+			int worldRelX = block.relativePos().x();
+			int worldRelY = block.relativePos().y();
+			int worldRelZ = block.relativePos().z();
+
+			// Calculate actual world position for block removal
+			BlockPos worldPos = new BlockPos(
+				(int) baseX + worldRelX,
+				(int) this.getY() + worldRelY,
+				(int) baseZ + worldRelZ
+			);
+
+			// Apply inverse rotation to convert to SHIP-LOCAL space
+			// Inverse of rotation by theta is rotation by -theta: (cos, -sin)
+			int localX = worldRelX * cos + worldRelZ * sin;
+			int localZ = -worldRelX * sin + worldRelZ * cos;
+
+			justfatlard.big_boats.util.RelativeBlockPos localRelPos =
+				new justfatlard.big_boats.util.RelativeBlockPos(localX, worldRelY, localZ);
+
+			// Save block entity data before removing
+			BlockEntity blockEntity = world.getBlockEntity(worldPos);
+			ShipBlock blockToAdd = new ShipBlock(localRelPos, block.blockState(), block.blockEntityData());
+			if (blockEntity != null) {
+				NbtCompound nbt = blockEntity.createNbtWithIdentifyingData(world.getRegistryManager());
+				blockToAdd = blockToAdd.withBlockEntityData(nbt);
+
+				// Clear inventory to prevent drops
+				if (blockEntity instanceof net.minecraft.inventory.Inventory inventory) {
+					inventory.clear();
+				}
+				world.removeBlockEntity(worldPos);
+			}
+
+			// Remove block from world
+			world.setBlockState(worldPos, net.minecraft.block.Blocks.AIR.getDefaultState(), net.minecraft.block.Block.NOTIFY_ALL);
+
+			// Add to ship's block list (with ship-local position)
+			blocks.add(blockToAdd);
+			localizedBlocks.add(blockToAdd);
+
+			// Add to docked positions (will be placed when ship docks again)
+			dockedBlockPositions.add(worldPos);
+
+			// Spawn collision shulker for the new block (uses ship-local position)
+			spawnCollisionShulkerForBlock(world, blockToAdd);
+		}
+
+		// Update element holder with new blocks (using ship-local positions)
+		if (elementHolder != null) {
+			elementHolder.addBlocks(localizedBlocks, yawRadians);
+		}
+	}
+
+	/**
+	 * Re-scans the ship structure from the helm position to detect any blocks added while docked.
+	 * New blocks are added to the ship's block list and display holder.
+	 */
+	private void rescanShipStructure(ServerWorld world, BlockPos helmWorldPos) {
+		// Get current rotation (snapped to cardinal)
+		float snappedYaw = Math.round(visualYaw / 90.0f) * 90.0f;
+		float yawRadians = (float) Math.toRadians(snappedYaw);
+		int cos = (int) Math.round(Math.cos(yawRadians));
+		int sin = (int) Math.round(Math.sin(yawRadians));
+
+		// Build set of current ship block world positions
+		Set<BlockPos> currentWorldPositions = new HashSet<>();
+		for (ShipBlock block : blocks) {
+			int relX = block.relativePos().x();
+			int relZ = block.relativePos().z();
+			// Apply rotation to get world position
+			int rotatedX = relX * cos - relZ * sin;
+			int rotatedZ = relX * sin + relZ * cos;
+
+			BlockPos worldPos = new BlockPos(
+				(int) baseX + rotatedX,
+				(int) this.getY() + block.relativePos().y(),
+				(int) baseZ + rotatedZ
+			);
+			currentWorldPositions.add(worldPos);
+		}
+
+		// Run flood-fill from helm to detect all connected blocks
+		var detectionResult = justfatlard.big_boats.detection.FloodFillDetector.detect(world, helmWorldPos);
+		if (!detectionResult.success()) {
+			System.out.println("[Ship] rescanShipStructure failed: " + detectionResult.errorMessage());
+			return;
+		}
+
+		// Find new blocks (in detection result but not in current ship)
+		List<ShipBlock> newBlocks = new ArrayList<>();
+		for (ShipBlock detectedBlock : detectionResult.blocks()) {
+			// Detection result has positions relative to helm at yaw=0
+			// But the world blocks are at rotated positions, so detection gives us
+			// the ACTUAL relative position from current helm world position
+			BlockPos detectedWorldPos = helmWorldPos.add(
+				detectedBlock.relativePos().x(),
+				detectedBlock.relativePos().y(),
+				detectedBlock.relativePos().z()
+			);
+
+			if (!currentWorldPositions.contains(detectedWorldPos)) {
+				// This is a new block - need to calculate its relative position
+				// accounting for current ship rotation (inverse rotation)
+				int worldDeltaX = detectedWorldPos.getX() - (int) baseX;
+				int worldDeltaY = detectedWorldPos.getY() - (int) this.getY();
+				int worldDeltaZ = detectedWorldPos.getZ() - (int) baseZ;
+
+				// Apply inverse rotation to get original relative position
+				// Inverse of rotation by theta is rotation by -theta
+				// cos(-theta) = cos(theta), sin(-theta) = -sin(theta)
+				int unrotatedX = worldDeltaX * cos + worldDeltaZ * sin;
+				int unrotatedZ = -worldDeltaX * sin + worldDeltaZ * cos;
+
+				justfatlard.big_boats.util.RelativeBlockPos newRelPos =
+					new justfatlard.big_boats.util.RelativeBlockPos(unrotatedX, worldDeltaY, unrotatedZ);
+
+				ShipBlock newBlock = new ShipBlock(newRelPos, detectedBlock.blockState(), detectedBlock.blockEntityData());
+				newBlocks.add(newBlock);
+
+				System.out.println("[Ship] Found new block at world " + detectedWorldPos +
+					" -> relative " + newRelPos + " (type: " + detectedBlock.blockState().getBlock() + ")");
+			}
+		}
+
+		if (!newBlocks.isEmpty()) {
+			System.out.println("[Ship] rescanShipStructure found " + newBlocks.size() + " new blocks");
+
+			// Add new blocks to ship
+			blocks.addAll(newBlocks);
+
+			// Update dockedBlockPositions with new block positions
+			for (ShipBlock block : newBlocks) {
+				int relX = block.relativePos().x();
+				int relZ = block.relativePos().z();
+				int rotatedX = relX * cos - relZ * sin;
+				int rotatedZ = relX * sin + relZ * cos;
+
+				BlockPos worldPos = new BlockPos(
+					(int) baseX + rotatedX,
+					(int) this.getY() + block.relativePos().y(),
+					(int) baseZ + rotatedZ
+				);
+				dockedBlockPositions.add(worldPos);
+			}
+
+			// Update element holder with new blocks
+			if (elementHolder != null) {
+				elementHolder.addBlocks(newBlocks, yawRadians);
+			}
+
+			// Spawn collision shulkers for new blocks
+			for (ShipBlock block : newBlocks) {
+				spawnCollisionShulkerForBlock(world, block);
+			}
+		}
+	}
+
+	/**
+	 * Spawns a collision shulker for a single block (used when absorbing blocks).
+	 */
+	private void spawnCollisionShulkerForBlock(ServerWorld world, ShipBlock block) {
+		ShulkerEntity shulker = new ShulkerEntity(EntityType.SHULKER, world);
+
+		Vec3d blockPos = block.relativePos().toVec3d();
+		shulker.setPosition(
+			baseX + blockPos.x,
+			this.getY() + blockPos.y,
+			baseZ + blockPos.z
+		);
+
+		shulker.addStatusEffect(new StatusEffectInstance(
+			StatusEffects.INVISIBILITY,
+			Integer.MAX_VALUE,
+			0, false, false, false
+		));
+
+		shulker.setAiDisabled(true);
+		shulker.setNoGravity(true);
+		shulker.setSilent(true);
+		shulker.setInvulnerable(true);
+
+		world.spawnEntity(shulker);
+		collisionShulkers.add(shulker);
 	}
 
 	private void initializeElementHolder() {
@@ -248,17 +770,19 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 
 	@Override
 	public EntityType<?> getPolymerEntityType(PacketContext context) {
-		// Use pig - living entity that can be invisible and supports passengers
 		return EntityType.PIG;
 	}
 
 	@Override
 	public void modifyRawTrackedData(List<DataTracker.SerializedEntry<?>> data, ServerPlayerEntity player, boolean initial) {
-		// Make the pig invisible via entity flags (index 0, bit 0x20 = invisible)
-		data.removeIf(entry -> entry.id() == 0);
+		data.clear();
+		// Index 0: Entity flags - 0x20 = invisible
 		data.add(new DataTracker.SerializedEntry<>(0, TrackedDataHandlerRegistry.BYTE, (byte) 0x20));
-		// Add saddle so it can be ridden (pig tracked data index 17)
-		data.add(new DataTracker.SerializedEntry<>(17, TrackedDataHandlerRegistry.BOOLEAN, true));
+		// Index 17: Pig flags - 0x01 = saddled
+		data.add(new DataTracker.SerializedEntry<>(17, TrackedDataHandlerRegistry.BYTE, (byte) 0x01));
+		// Index 18: Pig boost time - we repurpose this to send ship block count to clients
+		// Client can read this to calculate dynamic camera distance
+		data.add(new DataTracker.SerializedEntry<>(18, TrackedDataHandlerRegistry.INTEGER, blocks.size()));
 	}
 
 	@Override
@@ -297,21 +821,229 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 
 	@Override
 	public ActionResult interact(PlayerEntity player, Hand hand) {
-		if (!this.getEntityWorld().isClient()) {
-			if (!player.shouldCancelInteraction()) {
-				// Mount player directly on the ship
-				if (this.getPassengerList().isEmpty()) {
-					player.startRiding(this);
-					return ActionResult.CONSUME;
-				}
+		if (!this.getEntityWorld().isClient() && player instanceof ServerPlayerEntity) {
+			System.out.println("[Ship] interact() called, docked=" + docked + ", passengers=" + this.getPassengerList().size());
+			// Clicking the ship entity (helm area) starts driving
+			if (this.getPassengerList().isEmpty()) {
+				// Undock to start driving
+				System.out.println("[Ship] Calling undock()...");
+				undock();
+				System.out.println("[Ship] After undock(), docked=" + docked);
+				// Force mounting to bypass sneak check
+				boolean mounted = player.startRiding(this, true, true);
+				System.out.println("[Ship] startRiding result=" + mounted);
+				return ActionResult.CONSUME;
 			}
 		}
 		return ActionResult.PASS;
 	}
 
 	@Override
+	protected void addPassenger(Entity passenger) {
+		super.addPassenger(passenger);
+		// Auto-undock when someone mounts (handles both helm click and direct pig mounting)
+		if (docked && !this.getEntityWorld().isClient() && this.getEntityWorld() instanceof ServerWorld world) {
+			System.out.println("[Ship] addPassenger() - checking grounding before undock");
+
+			// Check for grounding - is the ship connected to land?
+			Set<BlockPos> shipPositions = new HashSet<>(dockedBlockPositions);
+			BlockPos helmPos = new BlockPos((int) baseX, (int) this.getY(), (int) baseZ);
+
+			var groundingResult = justfatlard.big_boats.detection.FloodFillDetector.detectGrounding(
+				world, shipPositions, blocks.size(), helmPos);
+
+			if (groundingResult.isGrounded()) {
+				// Ship is grounded - can't undock
+				System.out.println("[Ship] GROUNDED - " + groundingResult.message());
+				if (passenger instanceof ServerPlayerEntity player) {
+					player.sendMessage(net.minecraft.text.Text.literal("§cShip is grounded! Disconnect from land to sail."), true);
+				}
+				// Kick the passenger off since we can't undock
+				passenger.stopRiding();
+				return;
+			}
+
+			// Check if there are blocks to absorb
+			if (!groundingResult.connectedBlocks().isEmpty()) {
+				System.out.println("[Ship] Absorbing " + groundingResult.connectedBlocks().size() + " connected blocks into ship");
+				absorbBlocks(world, groundingResult.connectedBlocks());
+				if (passenger instanceof ServerPlayerEntity player) {
+					player.sendMessage(net.minecraft.text.Text.literal("§aAbsorbed " + groundingResult.connectedBlocks().size() + " blocks into ship!"), true);
+				}
+			}
+
+			System.out.println("[Ship] addPassenger() - auto-undocking");
+			undock();
+		}
+	}
+
+	@Override
+	protected void removePassenger(Entity passenger) {
+		super.removePassenger(passenger);
+		// Auto-dock when driver dismounts
+		if (this.getPassengerList().isEmpty() && !this.getEntityWorld().isClient()) {
+			dock();
+		}
+	}
+
+	/**
+	 * Finds which ship block the player is looking at.
+	 * Returns the block index, or -1 if not looking at any ship block.
+	 */
+	private int findLookedAtBlock(PlayerEntity player) {
+		Vec3d eyePos = player.getEyePos();
+		Vec3d lookVec = player.getRotationVec(1.0f);
+		double reach = 4.5; // Block interaction reach
+
+		float yawRadians = (float) Math.toRadians(visualYaw);
+		double cos = Math.cos(-yawRadians);
+		double sin = Math.sin(-yawRadians);
+
+		int closestIndex = -1;
+		double closestDist = reach;
+
+		for (int i = 0; i < blocks.size(); i++) {
+			ShipBlock block = blocks.get(i);
+
+			// Calculate world position of this block
+			double relX = block.relativePos().x();
+			double relY = block.relativePos().y();
+			double relZ = block.relativePos().z();
+
+			// Rotate relative position by ship yaw
+			double rotatedX = relX * cos - relZ * sin;
+			double rotatedZ = relX * sin + relZ * cos;
+
+			double worldX = baseX + rotatedX;
+			double worldY = this.getY() + relY;
+			double worldZ = baseZ + rotatedZ;
+
+			// Create bounding box for this block
+			Box blockBox = new Box(worldX, worldY, worldZ, worldX + 1, worldY + 1, worldZ + 1);
+
+			// Raycast to check if player is looking at this block
+			java.util.Optional<Vec3d> hit = blockBox.raycast(eyePos, eyePos.add(lookVec.multiply(reach)));
+			if (hit.isPresent()) {
+				double dist = hit.get().distanceTo(eyePos);
+				if (dist < closestDist) {
+					closestDist = dist;
+					closestIndex = i;
+				}
+			}
+		}
+
+		return closestIndex;
+	}
+
+	/**
+	 * Tries to interact with a ship block (doors, trapdoors, fence gates).
+	 */
+	private ActionResult tryInteractWithBlock(PlayerEntity player, int blockIndex) {
+		if (blockIndex < 0 || blockIndex >= blocks.size()) {
+			return ActionResult.PASS;
+		}
+
+		ShipBlock shipBlock = blocks.get(blockIndex);
+		BlockState state = shipBlock.blockState();
+
+		// Handle doors
+		if (state.getBlock() instanceof DoorBlock) {
+			BlockState newState = state.cycle(Properties.OPEN);
+			updateShipBlock(blockIndex, newState);
+
+			// Play door sound
+			World world = this.getEntityWorld();
+			boolean isOpen = newState.get(Properties.OPEN);
+			world.playSound(null, this.getX(), this.getY(), this.getZ(),
+				isOpen ? SoundEvents.BLOCK_WOODEN_DOOR_OPEN : SoundEvents.BLOCK_WOODEN_DOOR_CLOSE,
+				SoundCategory.BLOCKS, 1.0f, 1.0f);
+
+			// Also toggle the other half of the door
+			toggleDoorOtherHalf(blockIndex, state, isOpen);
+
+			return ActionResult.SUCCESS;
+		}
+
+		// Handle trapdoors
+		if (state.getBlock() instanceof TrapdoorBlock) {
+			BlockState newState = state.cycle(Properties.OPEN);
+			updateShipBlock(blockIndex, newState);
+
+			World world = this.getEntityWorld();
+			boolean isOpen = newState.get(Properties.OPEN);
+			world.playSound(null, this.getX(), this.getY(), this.getZ(),
+				isOpen ? SoundEvents.BLOCK_WOODEN_TRAPDOOR_OPEN : SoundEvents.BLOCK_WOODEN_TRAPDOOR_CLOSE,
+				SoundCategory.BLOCKS, 1.0f, 1.0f);
+
+			return ActionResult.SUCCESS;
+		}
+
+		// Handle fence gates
+		if (state.getBlock() instanceof FenceGateBlock) {
+			BlockState newState = state.cycle(Properties.OPEN);
+			updateShipBlock(blockIndex, newState);
+
+			World world = this.getEntityWorld();
+			boolean isOpen = newState.get(Properties.OPEN);
+			world.playSound(null, this.getX(), this.getY(), this.getZ(),
+				isOpen ? SoundEvents.BLOCK_FENCE_GATE_OPEN : SoundEvents.BLOCK_FENCE_GATE_CLOSE,
+				SoundCategory.BLOCKS, 1.0f, 1.0f);
+
+			return ActionResult.SUCCESS;
+		}
+
+		return ActionResult.PASS;
+	}
+
+	/**
+	 * Updates a ship block's state and refreshes the display.
+	 */
+	private void updateShipBlock(int index, BlockState newState) {
+		if (index >= 0 && index < blocks.size()) {
+			ShipBlock oldBlock = blocks.get(index);
+			blocks.set(index, new ShipBlock(oldBlock.relativePos(), newState));
+
+			if (elementHolder != null) {
+				elementHolder.updateBlockState(index, newState);
+			}
+		}
+	}
+
+	/**
+	 * Toggles the other half of a door to match.
+	 */
+	private void toggleDoorOtherHalf(int doorIndex, BlockState doorState, boolean isOpen) {
+		DoubleBlockHalf half = doorState.get(Properties.DOUBLE_BLOCK_HALF);
+		int yOffset = (half == DoubleBlockHalf.LOWER) ? 1 : -1;
+
+		ShipBlock doorBlock = blocks.get(doorIndex);
+		int targetY = doorBlock.relativePos().y() + yOffset;
+
+		// Find the other half
+		for (int i = 0; i < blocks.size(); i++) {
+			if (i == doorIndex) continue;
+
+			ShipBlock block = blocks.get(i);
+			if (block.relativePos().x() == doorBlock.relativePos().x()
+				&& block.relativePos().y() == targetY
+				&& block.relativePos().z() == doorBlock.relativePos().z()
+				&& block.blockState().getBlock() instanceof DoorBlock) {
+
+				BlockState otherState = block.blockState().with(Properties.OPEN, isOpen);
+				updateShipBlock(i, otherState);
+				break;
+			}
+		}
+	}
+
+	@Override
 	public void tick() {
 		super.tick();
+
+		// When docked, skip all physics and position updates
+		if (docked) {
+			return;
+		}
 
 		// Check if helm interaction was clicked
 		checkHelmInteraction();
@@ -330,10 +1062,15 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 		double moveX = 0;
 		double moveZ = 0;
 
-		// Get input from player riding the ship
+		// Get input from controlling passenger
+		ServerPlayerEntity controller = null;
 		if (this.hasPassengers() && this.getFirstPassenger() instanceof ServerPlayerEntity passenger) {
+			controller = passenger;
+		}
+
+		if (controller != null) {
 			// Get player movement input from mixin-captured storage
-			PlayerInput input = PlayerInputStorage.getInput(passenger);
+			PlayerInput input = PlayerInputStorage.getInput(controller);
 
 			// Convert boolean input to directional values
 			float forward = 0;
@@ -352,27 +1089,48 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 				this.setYaw(visualYaw);
 			}
 
-			// W/S moves forward/backward - combines helm facing (base) + visual yaw (rotation)
-			float baseYaw = directionToYaw(helmFacing);
-			float totalYawRadians = (float) Math.toRadians(baseYaw + visualYaw);
-			double speed = 0.15; // Ship speed per tick
+			// W/S applies acceleration in the forward/backward direction
 			if (forward != 0) {
-				moveX += -Math.sin(totalYawRadians) * forward * speed;
-				moveZ += Math.cos(totalYawRadians) * forward * speed;
+				float baseYaw = directionToYaw(helmFacing);
+				float totalYawRadians = (float) Math.toRadians(baseYaw + visualYaw);
+				// Apply acceleration in the direction the ship is facing
+				velocityX += -Math.sin(totalYawRadians) * forward * ACCELERATION;
+				velocityZ += Math.cos(totalYawRadians) * forward * ACCELERATION;
 			}
 		}
 
-		// Apply movement to logical BASE position (not entity position)
-		float yawRadians = (float) Math.toRadians(visualYaw);
+		// Apply drag (water resistance) - ship gradually slows down
+		velocityX *= DRAG;
+		velocityZ *= DRAG;
 
+		// Clamp velocity to max speed
+		double currentSpeed = Math.sqrt(velocityX * velocityX + velocityZ * velocityZ);
+		if (currentSpeed > MAX_SPEED) {
+			double scale = MAX_SPEED / currentSpeed;
+			velocityX *= scale;
+			velocityZ *= scale;
+		}
+
+		// Stop completely if very slow (prevents endless tiny drifting)
+		if (currentSpeed < 0.001) {
+			velocityX = 0;
+			velocityZ = 0;
+		}
+
+		// Apply velocity to position
+		float yawRadians = (float) Math.toRadians(visualYaw);
 		double newY = this.getY();
 
-		// Check each axis and accumulate valid movement on BASE position
-		if (moveX != 0 && !checkShipCollision(moveX, 0, 0, yawRadians)) {
-			baseX += moveX;
+		// Check collision and apply movement
+		if (velocityX != 0 && !checkShipCollision(velocityX, 0, 0, yawRadians)) {
+			baseX += velocityX;
+		} else if (velocityX != 0) {
+			velocityX = 0; // Stop on collision
 		}
-		if (moveZ != 0 && !checkShipCollision(0, 0, moveZ, yawRadians)) {
-			baseZ += moveZ;
+		if (velocityZ != 0 && !checkShipCollision(0, 0, velocityZ, yawRadians)) {
+			baseZ += velocityZ;
+		} else if (velocityZ != 0) {
+			velocityZ = 0; // Stop on collision
 		}
 		if (yVelocity != 0 && !checkShipCollision(0, yVelocity, 0, yawRadians)) {
 			newY += yVelocity;
@@ -398,12 +1156,18 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 		double rotatedPlayerZ = basePlayerOffsetX * Math.sin(yawRadians) + basePlayerOffsetZ * Math.cos(yawRadians);
 
 		// Entity position = logical base + helm center offset + orbit offset
-		double entityX = baseX + 0.5 + rotatedPlayerX;
-		double entityZ = baseZ + 0.5 + rotatedPlayerZ;
+		double targetEntityX = baseX + 0.5 + rotatedPlayerX;
+		double targetEntityZ = baseZ + 0.5 + rotatedPlayerZ;
 
-		this.setPosition(entityX, newY, entityZ);
-		// Clear velocity to prevent sliding
-		this.setVelocity(0, 0, 0);
+		// Use velocity-based movement for smooth player interpolation
+		double deltaX = targetEntityX - this.getX();
+		double deltaY = newY - this.getY();
+		double deltaZ = targetEntityZ - this.getZ();
+
+		// Set velocity so client can interpolate smoothly
+		this.setVelocity(deltaX, deltaY, deltaZ);
+		// Apply movement using Minecraft's system for proper interpolation
+		this.move(MovementType.SELF, this.getVelocity());
 
 		// Update display entity positions - blocks need to compensate for entity orbit
 		// Pass the orbit offset so blocks can adjust
@@ -414,11 +1178,14 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 		// Update collision entity positions (relative to logical helm position)
 		updateCollisionPositionsWithOffset(baseX, baseZ, yawRadians);
 
-		// Keep seat entity synced (if it exists)
+		// Keep seat entity synced using velocity-based movement too
 		if (seatEntity != null && !seatEntity.isRemoved()) {
-			seatEntity.setPosition(entityX, newY, entityZ);
+			double seatDeltaX = targetEntityX - seatEntity.getX();
+			double seatDeltaY = newY - seatEntity.getY();
+			double seatDeltaZ = targetEntityZ - seatEntity.getZ();
+			seatEntity.setVelocity(seatDeltaX, seatDeltaY, seatDeltaZ);
+			seatEntity.move(MovementType.SELF, seatEntity.getVelocity());
 		}
-
 	}
 
 	/**
@@ -469,7 +1236,6 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 	protected void updatePassengerPosition(Entity passenger, PositionUpdater positionUpdater) {
 		if (this.hasPassenger(passenger)) {
 			// Position passenger at helm center
-			// The entity yaw handles rotation on the client side
 			double finalX = this.getX() + 0.5;
 			double finalY = this.getY();
 			double finalZ = this.getZ() + 0.5;
@@ -522,9 +1288,27 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 		this.baseX = view.getDouble("base_x", this.getX());
 		this.baseZ = view.getDouble("base_z", this.getZ());
 
+		// Load docked state (default to true - ships load with real blocks in world)
+		this.docked = view.getBoolean("docked", true);
+
 		// Re-initialize display entities after loading (yaw is already set, so they'll be created correctly)
 		if (!blocks.isEmpty()) {
 			initializeElementHolder();
+			// Configure visibility based on docked state
+			if (docked) {
+				// Hide virtual display (real blocks are visible)
+				if (elementHolder != null) {
+					elementHolder.setVisible(false);
+				}
+				// Hide collision shulkers (real blocks have collision)
+				for (ShulkerEntity shulker : collisionShulkers) {
+					if (shulker != null) {
+						shulker.setInvisible(true);
+						shulker.setNoGravity(true);
+						shulker.setAiDisabled(true);
+					}
+				}
+			}
 		}
 	}
 
@@ -545,6 +1329,9 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 		// Save logical base position
 		view.putDouble("base_x", baseX);
 		view.putDouble("base_z", baseZ);
+
+		// Save docked state
+		view.putBoolean("docked", docked);
 	}
 
 	@Override
@@ -581,14 +1368,33 @@ public class MultiBlockShipEntity extends Entity implements PolymerEntity {
 	}
 
 	/**
+	 * Converts ship yaw (in degrees) to a BlockRotation for rotating block states.
+	 */
+	private static net.minecraft.util.BlockRotation yawToBlockRotation(float yaw) {
+		// Normalize yaw to 0-360 range
+		float normalizedYaw = ((yaw % 360) + 360) % 360;
+		// Round to nearest 90 degrees
+		int rotation = Math.round(normalizedYaw / 90) % 4;
+		return switch (rotation) {
+			case 0 -> net.minecraft.util.BlockRotation.NONE;
+			case 1 -> net.minecraft.util.BlockRotation.CLOCKWISE_90;
+			case 2 -> net.minecraft.util.BlockRotation.CLOCKWISE_180;
+			case 3 -> net.minecraft.util.BlockRotation.COUNTERCLOCKWISE_90;
+			default -> net.minecraft.util.BlockRotation.NONE;
+		};
+	}
+
+	/**
 	 * Checks if moving the ship would cause any block to collide with world terrain.
 	 * Returns true if collision detected. Breaks certain fragile blocks instead of colliding.
+	 * Uses baseX/baseZ (logical helm position) since blocks are positioned relative to helm, not entity.
 	 */
 	private boolean checkShipCollision(double deltaX, double deltaY, double deltaZ, float yawRadians) {
 		World world = this.getEntityWorld();
-		double newX = this.getX() + deltaX;
+		// Use baseX/baseZ as reference - blocks are relative to helm corner, not entity position
+		double newX = baseX + deltaX;
 		double newY = this.getY() + deltaY;
-		double newZ = this.getZ() + deltaZ;
+		double newZ = baseZ + deltaZ;
 
 		// Check corners of each ship block to prevent overlap
 		double[] offsets = {-0.49, 0.49}; // Check near edges of each block

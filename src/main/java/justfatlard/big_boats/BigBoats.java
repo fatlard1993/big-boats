@@ -63,6 +63,7 @@ public class BigBoats implements ModInitializer {
 	public static final HelmBlock HELM_BLOCK = new HelmBlock(
 		AbstractBlock.Settings.copy(Blocks.OAK_PLANKS)
 			.registryKey(HELM_BLOCK_KEY)
+			.nonOpaque() // Helm is a decorative ship wheel with gaps, don't cull adjacent faces
 	);
 
 	// Helm Block Item

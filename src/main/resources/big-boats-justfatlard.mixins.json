@@ -5,6 +5,10 @@
   "mixins": [
     "ServerPlayNetworkHandlerMixin"
   ],
+  "client": [
+    "client.CameraMixin",
+    "client.PigEntityAccessor"
+  ],
   "injectors": {
     "defaultRequire": 1
   }
