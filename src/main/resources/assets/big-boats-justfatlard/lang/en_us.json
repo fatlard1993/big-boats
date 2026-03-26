@@ -2,7 +2,20 @@
   "item.big-boats-justfatlard.christening_bottle": "Christening Bottle",
   "item.big-boats-justfatlard.helm": "Ship's Helm",
   "block.big-boats-justfatlard.helm": "Ship's Helm",
-  "entity.big-boats-justfatlard.block_boat": "Block Boat",
   "entity.big-boats-justfatlard.ship": "Ship",
-  "itemGroup.big-boats-justfatlard.big_boats": "Big Boats"
+  "entity.big-boats-justfatlard.christening_bottle": "Christening Bottle",
+  "itemGroup.big-boats-justfatlard.big_boats": "Big Boats",
+  "big-boats.christening.fail": "Christening failed: %s",
+  "big-boats.christening.success": "Ship launched with %d blocks! Right-click the helm to board.",
+  "big-boats.christening.success_named": "Ship \"%s\" launched with %d blocks! Right-click the helm to board.",
+  "big-boats.ship.grounded": "Ship is grounded — disconnect from land to sail",
+  "big-boats.ship.obstructed": "%d ship block(s) couldn't be placed — space was obstructed. Items dropped nearby.",
+  "big-boats.ship.lost_contents": "%d container(s) lost contents during docking — items dropped nearby",
+  "big-boats.ship.absorbed": "Absorbed %d new blocks into ship!",
+  "big-boats.ship.absorption_capped": "%d adjacent blocks left behind — ship at max capacity (%d blocks)",
+  "big-boats.ship.piloting": "Now piloting ship",
+  "big-boats.ship.piloting_named": "Now piloting %s",
+  "big-boats.command.cleanup_lights": "Removed %d orphaned light block(s) in %d-block radius",
+  "big-boats.ship.occupied": "Someone's already at the helm",
+  "big-boats.ship.structure_damaged": "Can't undock — ship blocks are missing or broken"
 }

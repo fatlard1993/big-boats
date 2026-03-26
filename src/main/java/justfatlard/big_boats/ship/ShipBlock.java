@@ -4,7 +4,10 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import justfatlard.big_boats.util.RelativeBlockPos;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.World;
 
 import java.util.Optional;
 
@@ -23,17 +26,26 @@ public record ShipBlock(RelativeBlockPos relativePos, BlockState blockState, Opt
 	);
 
 	/**
-	 * Constructor without block entity data (for backwards compatibility).
+	 * Convenience constructor without block entity data.
 	 */
 	public ShipBlock(RelativeBlockPos relativePos, BlockState blockState) {
 		this(relativePos, blockState, Optional.empty());
 	}
 
 	/**
-	 * Creates a ShipBlock that represents the helm position (origin).
+	 * Creates a ShipBlock from a world position, capturing block state and optional block entity data.
 	 */
-	public static ShipBlock helm(BlockState state) {
-		return new ShipBlock(RelativeBlockPos.ORIGIN, state, Optional.empty());
+	public static ShipBlock fromWorld(World world, BlockPos pos, BlockPos origin) {
+		BlockState state = world.getBlockState(pos);
+		RelativeBlockPos relativePos = RelativeBlockPos.fromWorldPos(pos, origin);
+		Optional<NbtCompound> blockEntityData = Optional.empty();
+
+		BlockEntity blockEntity = world.getBlockEntity(pos);
+		if (blockEntity != null) {
+			blockEntityData = Optional.of(blockEntity.createNbtWithIdentifyingData(world.getRegistryManager()));
+		}
+
+		return new ShipBlock(relativePos, state, blockEntityData);
 	}
 
 	/**

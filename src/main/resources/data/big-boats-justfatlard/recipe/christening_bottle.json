@@ -1,18 +1,12 @@
 {
-  "type": "minecraft:crafting_shaped",
+  "type": "minecraft:crafting_shapeless",
   "category": "misc",
-  "key": {
-    "B": "minecraft:glass_bottle",
-    "W": "minecraft:water_bucket",
-    "N": "minecraft:nautilus_shell"
-  },
-  "pattern": [
-    " N ",
-    "BWB",
-    " B "
+  "ingredients": [
+    "minecraft:heart_of_the_sea",
+    "minecraft:glass_bottle"
   ],
   "result": {
-    "count": 4,
+    "count": 1,
     "id": "big-boats-justfatlard:christening_bottle"
   }
 }

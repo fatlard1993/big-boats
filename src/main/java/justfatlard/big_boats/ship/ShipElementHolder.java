@@ -2,97 +2,63 @@ package justfatlard.big_boats.ship;
 
 import eu.pb4.polymer.virtualentity.api.ElementHolder;
 import eu.pb4.polymer.virtualentity.api.elements.BlockDisplayElement;
+import justfatlard.big_boats.util.RelativeBlockPos;
+import justfatlard.big_boats.util.ShipBlockUtils;
+import net.minecraft.block.BlockState;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Manages virtual display entities for rendering ship blocks to clients.
+ * Manages virtual {@link BlockDisplayElement} entities for rendering ship blocks to clients.
+ *
+ * <p>Uses Polymer's virtual entity system to show blocks without placing them in the world.
+ * Keyed by {@link RelativeBlockPos} to avoid index-coupling bugs. Block positions rotate
+ * around their visual centers (BLOCK_CENTER_OFFSET = 0.5) rather than their corners.</p>
+ *
+ * <p>The display compensates for the entity orbit offset: the entity position orbits the
+ * helm based on player seat position, so display elements need an inverse offset to stay
+ * visually anchored to the helm.</p>
  */
 public class ShipElementHolder extends ElementHolder {
-	private final List<BlockDisplayElement> blockElements = new ArrayList<>();
-	private final List<ShipBlock> shipBlocks;
+	private final Map<RelativeBlockPos, BlockDisplayElement> blockElements = new LinkedHashMap<>();
 	private float currentYaw = 0;
 
+	// Block-center offset: rotates blocks around their centers rather than corners.
+	// Without this, blocks visually orbit the helm corner instead of the helm center.
+	private static final double BLOCK_CENTER_OFFSET = 0.5;
+
 	public ShipElementHolder(List<ShipBlock> blocks, float initialYawRadians) {
-		this.shipBlocks = blocks;
 		this.currentYaw = initialYawRadians;
-		createBlockElements(initialYawRadians);
+		createBlockElements(blocks, initialYawRadians);
 	}
 
-	private void createBlockElements(float yawRadians) {
+	private Vec3d computeRotatedOffset(RelativeBlockPos relPos, float yawRadians) {
+		double relToCenterX = relPos.x() - BLOCK_CENTER_OFFSET;
+		double relToCenterZ = relPos.z() - BLOCK_CENTER_OFFSET;
+		Vec3d rotated = ShipBlockUtils.rotateXZ(relToCenterX, relToCenterZ, yawRadians);
+		return new Vec3d(rotated.x + BLOCK_CENTER_OFFSET, relPos.y(), rotated.z + BLOCK_CENTER_OFFSET);
+	}
+
+	private void createBlockElements(List<ShipBlock> blocks, float yawRadians) {
 		Quaternionf rotation = new Quaternionf().rotateY(-yawRadians);
 
-		final double centerX = 0.5;
-		final double centerZ = 0.5;
-
-		double cos = Math.cos(yawRadians);
-		double sin = Math.sin(yawRadians);
-
-		final float SCALE = 0.98f;
-		final double INSET = (1.0 - SCALE) / 2.0;
-
-		for (ShipBlock block : shipBlocks) {
+		for (ShipBlock block : blocks) {
 			BlockDisplayElement element = new BlockDisplayElement(block.blockState());
+			Vec3d offset = computeRotatedOffset(block.relativePos(), yawRadians);
 
-			double relToCenter_X = block.relativePos().x() - centerX;
-			double relToCenter_Z = block.relativePos().z() - centerZ;
-
-			double rotatedX = relToCenter_X * cos - relToCenter_Z * sin;
-			double rotatedZ = relToCenter_X * sin + relToCenter_Z * cos;
-
-			double finalX = rotatedX + centerX + INSET;
-			double finalZ = rotatedZ + centerZ + INSET;
-			double finalY = block.relativePos().y() + INSET;
-
-			element.setOffset(new Vec3d(finalX, finalY, finalZ));
-			element.setScale(new Vector3f(SCALE, SCALE, SCALE));
+			element.setOffset(offset);
 			element.setLeftRotation(rotation);
-			element.setTeleportDuration(1);
-			element.setInterpolationDuration(1);
+			element.setTeleportDuration(2);
+			element.setInterpolationDuration(2);
 
-			blockElements.add(element);
+			blockElements.put(block.relativePos(), element);
 			this.addElement(element);
-		}
-	}
-
-	/**
-	 * Updates block positions and visual rotation based on ship rotation.
-	 */
-	public void updateRotation(float yawRadians) {
-		boolean rotationChanged = Math.abs(yawRadians - currentYaw) > 0.001f;
-		currentYaw = yawRadians;
-
-		Quaternionf rotation = new Quaternionf().rotateY(-yawRadians);
-
-		final double centerX = 0.5;
-		final double centerZ = 0.5;
-
-		double cos = Math.cos(yawRadians);
-		double sin = Math.sin(yawRadians);
-
-		for (int i = 0; i < shipBlocks.size() && i < blockElements.size(); i++) {
-			ShipBlock block = shipBlocks.get(i);
-			BlockDisplayElement element = blockElements.get(i);
-
-			double relToCenter_X = block.relativePos().x() - centerX;
-			double relToCenter_Z = block.relativePos().z() - centerZ;
-
-			double rotatedX = relToCenter_X * cos - relToCenter_Z * sin;
-			double rotatedZ = relToCenter_X * sin + relToCenter_Z * cos;
-
-			double finalX = rotatedX + centerX;
-			double finalZ = rotatedZ + centerZ;
-
-			element.setOffset(new Vec3d(finalX, block.relativePos().y(), finalZ));
-			element.setLeftRotation(rotation);
-
-			if (rotationChanged) {
-				element.startInterpolation();
-			}
 		}
 	}
 
@@ -100,42 +66,21 @@ public class ShipElementHolder extends ElementHolder {
 	 * Updates block positions with an additional offset to compensate for entity orbit.
 	 */
 	public void updateRotationWithOffset(float yawRadians, double offsetX, double offsetZ) {
-		boolean rotationChanged = Math.abs(yawRadians - currentYaw) > 0.001f;
 		currentYaw = yawRadians;
 
 		Quaternionf rotation = new Quaternionf().rotateY(-yawRadians);
 
-		final double centerX = 0.5;
-		final double centerZ = 0.5;
+		for (var entry : blockElements.entrySet()) {
+			RelativeBlockPos relPos = entry.getKey();
+			BlockDisplayElement element = entry.getValue();
 
-		double cos = Math.cos(yawRadians);
-		double sin = Math.sin(yawRadians);
-
-		for (int i = 0; i < shipBlocks.size() && i < blockElements.size(); i++) {
-			ShipBlock block = shipBlocks.get(i);
-			BlockDisplayElement element = blockElements.get(i);
-
-			double relToCenter_X = block.relativePos().x() - centerX;
-			double relToCenter_Z = block.relativePos().z() - centerZ;
-
-			double rotatedX = relToCenter_X * cos - relToCenter_Z * sin;
-			double rotatedZ = relToCenter_X * sin + relToCenter_Z * cos;
-
-			double finalX = rotatedX + centerX + offsetX;
-			double finalZ = rotatedZ + centerZ + offsetZ;
-
-			element.setOffset(new Vec3d(finalX, block.relativePos().y(), finalZ));
+			Vec3d offset = computeRotatedOffset(relPos, yawRadians);
+			element.setOffset(new Vec3d(offset.x + offsetX, offset.y, offset.z + offsetZ));
 			element.setLeftRotation(rotation);
-
-			if (rotationChanged) {
-				element.startInterpolation();
-			}
+			element.startInterpolation();
 		}
 	}
 
-	/**
-	 * Gets the number of block display elements.
-	 */
 	public int getBlockCount() {
 		return blockElements.size();
 	}
@@ -143,9 +88,9 @@ public class ShipElementHolder extends ElementHolder {
 	/**
 	 * Updates the block state for a specific block (e.g., when toggling a door).
 	 */
-	public void updateBlockState(int index, net.minecraft.block.BlockState newState) {
-		if (index >= 0 && index < blockElements.size()) {
-			BlockDisplayElement element = blockElements.get(index);
+	public void updateBlockState(RelativeBlockPos relPos, BlockState newState) {
+		BlockDisplayElement element = blockElements.get(relPos);
+		if (element != null) {
 			element.setBlockState(newState);
 			element.tick();
 		}
@@ -155,10 +100,9 @@ public class ShipElementHolder extends ElementHolder {
 	 * Shows or hides all block display elements.
 	 */
 	public void setVisible(boolean visible) {
-		final float VISIBLE_SCALE = 0.98f;
-		for (BlockDisplayElement element : blockElements) {
+		for (BlockDisplayElement element : blockElements.values()) {
 			if (visible) {
-				element.setScale(new Vector3f(VISIBLE_SCALE, VISIBLE_SCALE, VISIBLE_SCALE));
+				element.setScale(new Vector3f(1.0f, 1.0f, 1.0f));
 			} else {
 				element.setScale(new Vector3f(0, 0, 0));
 			}
@@ -166,40 +110,41 @@ public class ShipElementHolder extends ElementHolder {
 	}
 
 	/**
-	 * Adds new display elements for blocks that were already added to the entity's block list.
+	 * Adds new display elements for blocks absorbed into the ship.
 	 */
 	public void addBlocks(List<ShipBlock> newBlocks, float yawRadians) {
 		Quaternionf rotation = new Quaternionf().rotateY(-yawRadians);
 
-		final double centerX = 0.5;
-		final double centerZ = 0.5;
-		final float SCALE = 0.98f;
-		final double INSET = (1.0 - SCALE) / 2.0;
-
-		double cos = Math.cos(yawRadians);
-		double sin = Math.sin(yawRadians);
-
 		for (ShipBlock block : newBlocks) {
 			BlockDisplayElement element = new BlockDisplayElement(block.blockState());
+			Vec3d offset = computeRotatedOffset(block.relativePos(), yawRadians);
 
-			double relToCenter_X = block.relativePos().x() - centerX;
-			double relToCenter_Z = block.relativePos().z() - centerZ;
-
-			double rotatedX = relToCenter_X * cos - relToCenter_Z * sin;
-			double rotatedZ = relToCenter_X * sin + relToCenter_Z * cos;
-
-			double finalX = rotatedX + centerX + INSET;
-			double finalZ = rotatedZ + centerZ + INSET;
-			double finalY = block.relativePos().y() + INSET;
-
-			element.setOffset(new Vec3d(finalX, finalY, finalZ));
-			element.setScale(new Vector3f(SCALE, SCALE, SCALE));
+			element.setOffset(offset);
 			element.setLeftRotation(rotation);
-			element.setTeleportDuration(1);
-			element.setInterpolationDuration(1);
+			element.setTeleportDuration(2);
+			element.setInterpolationDuration(2);
 
-			blockElements.add(element);
+			blockElements.put(block.relativePos(), element);
 			this.addElement(element);
+		}
+	}
+
+	/**
+	 * Rebuilds all display elements from a new block list.
+	 * Used after rescanShipStructure when blocks may have been added or removed.
+	 */
+	public void rebuildFromBlocks(List<ShipBlock> blocks, float yawRadians) {
+		// Save old elements for removal after new ones are created.
+		// This minimizes the flicker window where no blocks are visible to clients.
+		var oldElements = new ArrayList<>(blockElements.values());
+		blockElements.clear();
+
+		// Create new elements first
+		createBlockElements(blocks, yawRadians);
+
+		// Then remove old elements
+		for (BlockDisplayElement element : oldElements) {
+			this.removeElement(element);
 		}
 	}
 }

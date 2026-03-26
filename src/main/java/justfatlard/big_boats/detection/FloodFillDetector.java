@@ -1,46 +1,29 @@
 package justfatlard.big_boats.detection;
 
 import justfatlard.big_boats.ship.ShipBlock;
-import justfatlard.big_boats.util.RelativeBlockPos;
-import net.minecraft.block.*;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.RegistryWrapper;
+import justfatlard.big_boats.ship.ShipConfig;
+import justfatlard.big_boats.util.ShipBlockUtils;
+import net.minecraft.block.BlockState;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.World;
 
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedList;
+import java.util.ArrayDeque;
 import java.util.List;
-import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.function.Predicate;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Detects connected blocks for ship construction using BFS flood-fill algorithm.
  */
 public class FloodFillDetector {
-	public static final int MAX_BLOCKS = 2000;
-	public static final int MIN_BLOCKS = 2; // Helm + at least one other block
-
-	/**
-	 * Result of grounding detection.
-	 */
-	public record GroundingResult(boolean isGrounded, List<ShipBlock> connectedBlocks, String message) {
-		public static GroundingResult grounded(String message) {
-			return new GroundingResult(true, List.of(), message);
-		}
-
-		public static GroundingResult notGrounded() {
-			return new GroundingResult(false, List.of(), null);
-		}
-
-		public static GroundingResult absorbable(List<ShipBlock> blocks) {
-			return new GroundingResult(false, blocks, null);
-		}
-	}
+	private static final Logger LOGGER = LoggerFactory.getLogger(FloodFillDetector.class);
 
 	/**
 	 * Performs flood-fill detection starting from the helm position.
@@ -53,44 +36,35 @@ public class FloodFillDetector {
 	public static DetectionResult detect(World world, BlockPos helmPos) {
 		List<ShipBlock> blocks = new ArrayList<>();
 		Set<BlockPos> visited = new HashSet<>();
-		Queue<BlockPos> queue = new LinkedList<>();
+		Queue<BlockPos> queue = new ArrayDeque<>();
 
-		// Start from helm position
+		visited.add(helmPos);
 		queue.add(helmPos);
 
-		while (!queue.isEmpty() && blocks.size() < MAX_BLOCKS) {
+		while (!queue.isEmpty() && blocks.size() < ShipConfig.MAX_BLOCKS) {
 			BlockPos pos = queue.poll();
 
-			// Skip if already visited
-			if (visited.contains(pos)) {
+			// Skip positions in unloaded chunks — getBlockState returns air for
+			// unloaded chunks, which would silently truncate ships at chunk borders
+			if (!world.isChunkLoaded(pos)) {
 				continue;
 			}
-			visited.add(pos);
 
 			BlockState state = world.getBlockState(pos);
 
 			// Check if this block is valid for ship construction
-			if (!isBoatableBlock(state)) {
+			if (!ShipBlockUtils.isShipEligible(state)) {
 				continue;
 			}
 
 			// Add this block to the ship, including any block entity data
-			RelativeBlockPos relativePos = RelativeBlockPos.fromWorldPos(pos, helmPos);
-			Optional<NbtCompound> blockEntityData = Optional.empty();
+			blocks.add(ShipBlock.fromWorld(world, pos, helmPos));
 
-			BlockEntity blockEntity = world.getBlockEntity(pos);
-			if (blockEntity != null) {
-				// Save block entity NBT data (for chests, furnaces, signs, etc.)
-				NbtCompound nbt = blockEntity.createNbtWithIdentifyingData(world.getRegistryManager());
-				blockEntityData = Optional.of(nbt);
-			}
-
-			blocks.add(new ShipBlock(relativePos, state, blockEntityData));
-
-			// Add all adjacent positions to the queue
+			// Mark adjacent positions visited at enqueue time to prevent queue pollution
 			for (Direction direction : Direction.values()) {
 				BlockPos adjacent = pos.offset(direction);
 				if (!visited.contains(adjacent)) {
+					visited.add(adjacent);
 					queue.add(adjacent);
 				}
 			}
@@ -98,52 +72,20 @@ public class FloodFillDetector {
 
 		// Validate result
 		if (blocks.isEmpty()) {
-			return DetectionResult.failure("No valid blocks found at helm position");
+			return new DetectionResult.NoBlocks();
 		}
 
-		if (blocks.size() < MIN_BLOCKS) {
-			return DetectionResult.failure("Ship too small (minimum " + MIN_BLOCKS + " blocks required)");
+		if (blocks.size() < ShipConfig.MIN_BLOCKS) {
+			return new DetectionResult.TooSmall(blocks.size(), ShipConfig.MIN_BLOCKS);
 		}
 
-		if (blocks.size() >= MAX_BLOCKS) {
-			return DetectionResult.failure("Ship too large (maximum " + MAX_BLOCKS + " blocks allowed)");
+		// If we hit the block limit with unexplored territory, the structure exceeds max size
+		if (blocks.size() >= ShipConfig.MAX_BLOCKS && !queue.isEmpty()) {
+			return new DetectionResult.TooLarge();
 		}
 
-		return DetectionResult.success(blocks);
-	}
-
-	/**
-	 * Checks if a block state is valid for ship construction.
-	 * Excludes air, liquids, and fragile/plant blocks that ships break through.
-	 */
-	private static boolean isBoatableBlock(BlockState state) {
-		if (state.isAir() || state.isLiquid()) {
-			return false;
-		}
-
-		// Exclude fragile/plant blocks that ships can break through
-		Block block = state.getBlock();
-		if (block instanceof SeagrassBlock
-			|| block instanceof TallSeagrassBlock
-			|| block instanceof KelpBlock
-			|| block instanceof KelpPlantBlock
-			|| block instanceof LilyPadBlock
-			|| block instanceof TallPlantBlock
-			|| block instanceof FlowerBlock
-			|| block instanceof TallFlowerBlock
-			|| block instanceof SugarCaneBlock
-			|| block instanceof VineBlock
-			|| block instanceof SnowBlock
-			|| block instanceof CobwebBlock) {
-			return false;
-		}
-
-		// Also exclude blocks that are instantly breakable (hardness 0)
-		if (state.getHardness(null, null) == 0.0f) {
-			return false;
-		}
-
-		return true;
+		LOGGER.debug("Detected ship: {} blocks from helm at {}", blocks.size(), helmPos);
+		return new DetectionResult.Success(blocks);
 	}
 
 	/**
@@ -158,7 +100,7 @@ public class FloodFillDetector {
 	 * @return GroundingResult indicating grounding status and any absorbable blocks
 	 */
 	public static GroundingResult detectGrounding(World world, Set<BlockPos> shipPositions, int currentShipSize, BlockPos referencePos) {
-		int availableCapacity = MAX_BLOCKS - currentShipSize;
+		int availableCapacity = ShipConfig.MAX_BLOCKS - currentShipSize;
 
 		// Find all solid blocks adjacent to the ship that aren't part of the ship
 		Set<BlockPos> adjacentSolids = new HashSet<>();
@@ -167,7 +109,7 @@ public class FloodFillDetector {
 				BlockPos adjacent = shipPos.offset(direction);
 				if (!shipPositions.contains(adjacent)) {
 					BlockState state = world.getBlockState(adjacent);
-					if (isBoatableBlock(state)) {
+					if (ShipBlockUtils.isShipEligible(state)) {
 						adjacentSolids.add(adjacent);
 					}
 				}
@@ -176,59 +118,94 @@ public class FloodFillDetector {
 
 		// No adjacent solid blocks - ship is floating freely
 		if (adjacentSolids.isEmpty()) {
-			return GroundingResult.notGrounded();
+			return new GroundingResult.FreeFloating();
 		}
 
-		// Flood-fill from adjacent solids to find connected landmass
-		List<ShipBlock> connectedBlocks = new ArrayList<>();
+		// Flood-fill from adjacent solids to measure connected landmass size.
+		// Only counts blocks (no ShipBlock/NBT construction) since the result is pass/fail.
+		int connectedCount = 0;
 		Set<BlockPos> visited = new HashSet<>(shipPositions); // Treat ship positions as already visited
-		Queue<BlockPos> queue = new LinkedList<>(adjacentSolids);
+		Queue<BlockPos> queue = new ArrayDeque<>();
 
-		while (!queue.isEmpty()) {
+		for (BlockPos adj : adjacentSolids) {
+			if (!visited.contains(adj)) {
+				visited.add(adj);
+				queue.add(adj);
+			}
+		}
+
+		while (!queue.isEmpty() && visited.size() < ShipConfig.MAX_BLOCKS * 2) {
 			BlockPos pos = queue.poll();
 
-			if (visited.contains(pos)) {
+			if (Math.abs(pos.getY() - referencePos.getY()) > ShipConfig.MAX_GROUNDING_Y_RANGE) {
 				continue;
 			}
-			visited.add(pos);
 
 			BlockState state = world.getBlockState(pos);
 
-			if (!isBoatableBlock(state)) {
+			if (!ShipBlockUtils.isShipEligible(state)) {
 				continue;
 			}
 
-			// Check if we've exceeded capacity
-			if (connectedBlocks.size() >= availableCapacity) {
-				return GroundingResult.grounded("Ship is grounded - connected to landmass too large to absorb");
+			connectedCount++;
+			if (connectedCount >= availableCapacity) {
+				return new GroundingResult.GroundedTooLarge();
 			}
 
-			// Add this block to the connected set
-			RelativeBlockPos relativePos = RelativeBlockPos.fromWorldPos(pos, referencePos);
-			Optional<NbtCompound> blockEntityData = Optional.empty();
-
-			BlockEntity blockEntity = world.getBlockEntity(pos);
-			if (blockEntity != null) {
-				NbtCompound nbt = blockEntity.createNbtWithIdentifyingData(world.getRegistryManager());
-				blockEntityData = Optional.of(nbt);
-			}
-
-			connectedBlocks.add(new ShipBlock(relativePos, state, blockEntityData));
-
-			// Add adjacent positions to queue
 			for (Direction direction : Direction.values()) {
 				BlockPos adjacent = pos.offset(direction);
 				if (!visited.contains(adjacent)) {
+					visited.add(adjacent);
 					queue.add(adjacent);
 				}
 			}
 		}
 
-		// If we found connected blocks but didn't exceed capacity, they can be absorbed
-		if (!connectedBlocks.isEmpty()) {
-			return GroundingResult.absorbable(connectedBlocks);
+		if (!queue.isEmpty()) {
+			return new GroundingResult.GroundedMassive();
 		}
 
-		return GroundingResult.notGrounded();
+		if (connectedCount > 0) {
+			return new GroundingResult.TouchingTerrain();
+		}
+
+		return new GroundingResult.FreeFloating();
+	}
+
+	/**
+	 * BFS through connected boatable blocks to find one matching the predicate.
+	 *
+	 * @param world The world to search in
+	 * @param startPos Starting position for the search
+	 * @param predicate Test applied to each block's state
+	 * @return The position of the first matching block, or null if not found
+	 */
+	public static BlockPos findBlock(World world, BlockPos startPos, Predicate<BlockState> predicate) {
+		Queue<BlockPos> queue = new ArrayDeque<>();
+		Set<BlockPos> visited = new HashSet<>();
+		visited.add(startPos);
+		queue.add(startPos);
+
+		while (!queue.isEmpty() && visited.size() < ShipConfig.MAX_BLOCKS) {
+			BlockPos pos = queue.poll();
+
+			BlockState state = world.getBlockState(pos);
+
+			if (predicate.test(state)) {
+				return pos;
+			}
+
+			if (ShipBlockUtils.isShipEligible(state)) {
+				for (Direction dir : Direction.values()) {
+					BlockPos neighbor = pos.offset(dir);
+					if (!visited.contains(neighbor)) {
+						visited.add(neighbor);
+						queue.add(neighbor);
+					}
+				}
+			}
+		}
+
+		return null;
 	}
 }

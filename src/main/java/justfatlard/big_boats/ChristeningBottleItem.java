@@ -2,9 +2,11 @@ package justfatlard.big_boats;
 
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.item.tooltip.TooltipType;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.stat.Stats;
@@ -16,7 +18,7 @@ import xyz.nucleoid.packettweaker.PacketContext;
 
 /**
  * A throwable bottle used to christen ships.
- * Throw at a helm block to convert connected boatable blocks into a ship entity.
+ * Throw at any part of a ship to convert connected solid blocks into a ship entity.
  */
 public class ChristeningBottleItem extends Item implements PolymerItem {
 	private final Identifier modelId;
@@ -37,10 +39,16 @@ public class ChristeningBottleItem extends Item implements PolymerItem {
 	}
 
 	@Override
+	public ItemStack getPolymerItemStack(ItemStack itemStack, TooltipType tooltipType, PacketContext context) {
+		ItemStack clientStack = PolymerItem.super.getPolymerItemStack(itemStack, tooltipType, context);
+		clientStack.set(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, true);
+		return clientStack;
+	}
+
+	@Override
 	public ActionResult use(World world, PlayerEntity user, Hand hand) {
 		ItemStack stack = user.getStackInHand(hand);
 
-		// Play throw sound
 		world.playSound(
 			null,
 			user.getX(), user.getY(), user.getZ(),
@@ -51,7 +59,6 @@ public class ChristeningBottleItem extends Item implements PolymerItem {
 		);
 
 		if (!world.isClient()) {
-			// Create and spawn the projectile
 			ChristeningBottleEntity entity = new ChristeningBottleEntity(world, user, stack);
 			entity.setVelocity(user, user.getPitch(), user.getYaw(), 0.0F, 1.5F, 1.0F);
 			world.spawnEntity(entity);

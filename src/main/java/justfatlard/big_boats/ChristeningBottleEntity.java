@@ -6,8 +6,9 @@ import justfatlard.big_boats.detection.DetectionResult;
 import justfatlard.big_boats.detection.FloodFillDetector;
 import justfatlard.big_boats.ship.MultiBlockShipEntity;
 import justfatlard.big_boats.ship.ShipBlock;
+import justfatlard.big_boats.ship.ShipConfig;
+import justfatlard.big_boats.util.ShipBlockUtils;
 import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.projectile.thrown.ThrownItemEntity;
@@ -23,25 +24,25 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.World;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.Queue;
 import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Throwable christening bottle projectile.
- * When it hits a valid ship (helm block with connected boatable blocks),
+ * When it hits a valid ship (helm block with connected solid blocks),
  * it christens the ship. Otherwise, it returns to item form with an error message.
  */
 public class ChristeningBottleEntity extends ThrownItemEntity implements PolymerEntity {
+	private static final Logger LOGGER = LoggerFactory.getLogger(ChristeningBottleEntity.class);
 
 	public ChristeningBottleEntity(EntityType<? extends ThrownItemEntity> entityType, World world) {
 		super(entityType, world);
@@ -92,7 +93,7 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 		}
 
 		// Try to find a helm block at or near the impact point
-		BlockPos helmPos = findHelmNear(world, targetPos);
+		BlockPos helmPos = findHelmInStructure(world, targetPos);
 
 		if (helmPos == null) {
 			failChristening(serverWorld, targetPos, "No helm block found - build a ship with a helm!");
@@ -106,28 +107,44 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 		// Run flood-fill detection
 		DetectionResult result = FloodFillDetector.detect(world, helmPos);
 
-		if (!result.success()) {
-			String errorMessage = result.errorMessage().orElse("Unknown detection error");
-			failChristening(serverWorld, targetPos, errorMessage);
+		if (!(result instanceof DetectionResult.Success success)) {
+			String reason = result instanceof DetectionResult.Failure failure
+				? failure.message() : "Detection failed";
+			failChristening(serverWorld, targetPos, reason);
 			return;
 		}
 
-		// Check if ship is connected to land (has adjacent non-air/water blocks not part of ship)
-		String landCheckError = checkConnectedToLand(world, helmPos, result);
-		if (landCheckError != null) {
-			failChristening(serverWorld, targetPos, landCheckError);
+		// Check if any detected block overlaps with an existing ship
+		Set<BlockPos> shipPositions = new HashSet<>();
+		for (ShipBlock block : success.blocks()) {
+			shipPositions.add(block.relativePos().toWorldPos(helmPos));
+		}
+		for (MultiBlockShipEntity existingShip : serverWorld.getEntitiesByClass(
+				MultiBlockShipEntity.class,
+				new Box(helmPos).expand(ShipConfig.SHIP_OVERLAP_SEARCH_RANGE),
+				MultiBlockShipEntity::isDocked)) {
+			for (BlockPos existingPos : existingShip.getDockedBlockPositions()) {
+				if (shipPositions.contains(existingPos)) {
+					failChristening(serverWorld, targetPos, "These blocks are already part of a ship!");
+					return;
+				}
+			}
+		}
+		var groundingResult = FloodFillDetector.detectGrounding(serverWorld, shipPositions, success.blockCount(), helmPos);
+		if (!groundingResult.canUndock()) {
+			failChristening(serverWorld, targetPos, "Ship is connected to land - disconnect it first!");
 			return;
 		}
 
-		// Success! Christen the ship
-		successChristening(serverWorld, helmPos, helmFacing, result);
+		LOGGER.info("Christening ship at {} with {} blocks", helmPos, success.blockCount());
+		successChristening(serverWorld, helmPos, helmFacing, success);
 	}
 
 	/**
-	 * Searches for a helm block by doing a BFS through connected boatable blocks.
-	 * This allows hitting any part of the ship to christen it.
+	 * Searches for a helm block by BFS through connected ship-eligible blocks.
+	 * This allows hitting any part of the ship structure to christen it.
 	 */
-	private BlockPos findHelmNear(World world, BlockPos pos) {
+	private BlockPos findHelmInStructure(World world, BlockPos pos) {
 		if (pos == null) {
 			return null;
 		}
@@ -138,24 +155,18 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 			return pos;
 		}
 
-		// If hit block isn't boatable, check adjacent positions for a starting point
-		TagKey<net.minecraft.block.Block> boatableTag = TagKey.of(
-			RegistryKeys.BLOCK,
-			Identifier.of("big-boats-justfatlard", "boatable_blocks")
-		);
-
+		// If hit block isn't a valid ship block, check adjacent positions for a starting point
 		BlockPos startPos = null;
-		if (hitState.isIn(boatableTag) || hitState.getBlock() instanceof HelmBlock) {
+		if (ShipBlockUtils.isShipEligible(hitState)) {
 			startPos = pos;
 		} else {
-			// Check adjacent blocks for a boatable block to start from
 			for (Direction dir : Direction.values()) {
 				BlockPos adjacent = pos.offset(dir);
 				BlockState adjacentState = world.getBlockState(adjacent);
 				if (adjacentState.getBlock() instanceof HelmBlock) {
-					return adjacent; // Found helm directly adjacent
+					return adjacent;
 				}
-				if (adjacentState.isIn(boatableTag)) {
+				if (ShipBlockUtils.isShipEligible(adjacentState)) {
 					startPos = adjacent;
 					break;
 				}
@@ -163,98 +174,10 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 		}
 
 		if (startPos == null) {
-			return null; // No boatable block found nearby
+			return null;
 		}
 
-		// BFS through connected boatable blocks to find the helm
-		Queue<BlockPos> queue = new LinkedList<>();
-		Set<BlockPos> visited = new HashSet<>();
-		queue.add(startPos);
-
-		int maxSearch = 2000; // Same limit as ship detection
-		int searched = 0;
-
-		while (!queue.isEmpty() && searched < maxSearch) {
-			BlockPos current = queue.poll();
-			if (visited.contains(current)) continue;
-			visited.add(current);
-			searched++;
-
-			BlockState state = world.getBlockState(current);
-
-			// Found the helm!
-			if (state.getBlock() instanceof HelmBlock) {
-				return current;
-			}
-
-			// If boatable, continue searching neighbors
-			if (state.isIn(boatableTag)) {
-				for (Direction dir : Direction.values()) {
-					BlockPos neighbor = current.offset(dir);
-					if (!visited.contains(neighbor)) {
-						queue.add(neighbor);
-					}
-				}
-			}
-		}
-
-		return null; // No helm found in connected structure
-	}
-
-	/**
-	 * Checks if the detected ship is connected to land (non-ship, non-air, non-water blocks).
-	 */
-	private String checkConnectedToLand(World world, BlockPos helmPos, DetectionResult result) {
-		for (ShipBlock block : result.blocks()) {
-			BlockPos worldPos = block.relativePos().toWorldPos(helmPos);
-
-			for (Direction dir : Direction.values()) {
-				BlockPos adjacent = worldPos.offset(dir);
-				BlockState adjacentState = world.getBlockState(adjacent);
-
-				// Skip air, water, and breakable blocks (plants, etc.)
-				if (adjacentState.isAir() || adjacentState.isOf(Blocks.WATER) || isBreakableBlock(adjacentState)) {
-					continue;
-				}
-
-				// Check if this adjacent block is part of the ship
-				boolean isPartOfShip = false;
-				for (ShipBlock shipBlock : result.blocks()) {
-					if (shipBlock.relativePos().toWorldPos(helmPos).equals(adjacent)) {
-						isPartOfShip = true;
-						break;
-					}
-				}
-
-				if (!isPartOfShip) {
-					return "Ship is connected to land - disconnect it first!";
-				}
-			}
-		}
-		return null;
-	}
-
-	/**
-	 * Checks if a block is breakable by ships (plants, fragile blocks, etc.)
-	 */
-	private boolean isBreakableBlock(BlockState state) {
-		net.minecraft.block.Block block = state.getBlock();
-		if (block instanceof net.minecraft.block.SeagrassBlock
-			|| block instanceof net.minecraft.block.TallSeagrassBlock
-			|| block instanceof net.minecraft.block.KelpBlock
-			|| block instanceof net.minecraft.block.KelpPlantBlock
-			|| block instanceof net.minecraft.block.LilyPadBlock
-			|| block instanceof net.minecraft.block.TallPlantBlock
-			|| block instanceof net.minecraft.block.FlowerBlock
-			|| block instanceof net.minecraft.block.TallFlowerBlock
-			|| block instanceof net.minecraft.block.SugarCaneBlock
-			|| block instanceof net.minecraft.block.VineBlock
-			|| block instanceof net.minecraft.block.SnowBlock
-			|| block instanceof net.minecraft.block.CobwebBlock) {
-			return true;
-		}
-		// Instantly breakable blocks (hardness 0)
-		return state.getHardness(null, null) == 0.0f && !state.isAir();
+		return FloodFillDetector.findBlock(world, startPos, state -> state.getBlock() instanceof HelmBlock);
 	}
 
 	/**
@@ -280,10 +203,12 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 		// Drop the bottle as an item
 		this.dropItem(world, BigBoats.CHRISTENING_BOTTLE);
 
+		LOGGER.debug("Christening failed at {}: {}", pos, errorMessage);
+
 		// Send error message to the thrower
 		if (this.getOwner() instanceof ServerPlayerEntity player) {
 			player.sendMessage(
-				Text.literal("Christening failed: " + errorMessage)
+				Text.translatable("big-boats.christening.fail", errorMessage)
 					.formatted(Formatting.RED),
 				false
 			);
@@ -295,7 +220,7 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 	/**
 	 * Called when christening succeeds - converts the structure to a ship entity.
 	 */
-	private void successChristening(ServerWorld world, BlockPos helmPos, Direction helmFacing, DetectionResult result) {
+	private void successChristening(ServerWorld world, BlockPos helmPos, Direction helmFacing, DetectionResult.Success result) {
 		// Play christening sounds
 		world.playSound(
 			null,
@@ -332,18 +257,28 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 			result.blocks(),
 			helmFacing
 		);
+
+		// Transfer custom name from christening bottle to ship
+		ItemStack bottleStack = this.getStack();
+		String shipName = null;
+		if (bottleStack.contains(net.minecraft.component.DataComponentTypes.CUSTOM_NAME)) {
+			Text customName = bottleStack.get(net.minecraft.component.DataComponentTypes.CUSTOM_NAME);
+			if (customName != null) {
+				shipName = customName.getString();
+				ship.setShipName(shipName);
+			}
+		}
+
+		// Initialize ship BEFORE spawning to prevent tick() firing on uninitialized state
+		ship.initializeShip(helmPos);
 		world.spawnEntity(ship);
 
-		// Initialize ship (stays docked with real blocks until player mounts)
-		ship.initializeShip(helmPos);
-
-		// Notify the player
+		// Notify the player with ship name if present
 		if (this.getOwner() instanceof ServerPlayerEntity player) {
-			player.sendMessage(
-				Text.literal("Ship launched with " + result.blockCount() + " blocks! Right-click to board.")
-					.formatted(Formatting.GREEN),
-				false
-			);
+			Text message = shipName != null
+				? Text.translatable("big-boats.christening.success_named", shipName, result.blockCount())
+				: Text.translatable("big-boats.christening.success", result.blockCount());
+			player.sendMessage(message.copy().formatted(Formatting.GREEN), false);
 		}
 
 		this.discard();

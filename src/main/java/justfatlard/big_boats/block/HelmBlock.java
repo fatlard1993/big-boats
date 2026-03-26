@@ -7,6 +7,8 @@ import eu.pb4.polymer.blocks.api.PolymerBlockResourceUtils;
 import eu.pb4.polymer.blocks.api.PolymerTexturedBlock;
 import eu.pb4.polymer.core.api.item.PolymerItem;
 import justfatlard.big_boats.BigBoats;
+import justfatlard.big_boats.ship.MultiBlockShipEntity;
+import justfatlard.big_boats.ship.ShipConfig;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -19,7 +21,6 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.state.StateManager;
-import net.minecraft.state.property.EnumProperty;
 import net.minecraft.state.property.Properties;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.BlockMirror;
@@ -37,23 +38,16 @@ import xyz.nucleoid.packettweaker.PacketContext;
 
 /**
  * The helm block serves as the anchor point for ship construction.
- * Players must place this block on their ship structure and use
- * a Christening Bottle on it to convert the structure into a ship entity.
+ * Players place this block on their ship structure. Throwing a Christening
+ * Bottle at any part of the ship converts the connected structure into a ship entity.
  */
 public class HelmBlock extends HorizontalFacingBlock implements PolymerTexturedBlock {
 	public static final MapCodec<HelmBlock> CODEC = createCodec(HelmBlock::new);
-	public static final EnumProperty<Direction> FACING = Properties.HORIZONTAL_FACING;
-
 	// Cached polymer block states for each facing direction
 	private BlockState polymerStateNorth;
 	private BlockState polymerStateSouth;
 	private BlockState polymerStateEast;
 	private BlockState polymerStateWest;
-
-	// Static display-only states for split helm rendering (base + wheel)
-	// These are used by BlockDisplayElement for the rotating wheel effect
-	private static BlockState displayStateBase;
-	private static BlockState displayStateWheel;
 
 	public HelmBlock(Settings settings) {
 		super(settings);
@@ -66,55 +60,24 @@ public class HelmBlock extends HorizontalFacingBlock implements PolymerTexturedB
 	 */
 	public void registerPolymerModels() {
 		// Request polymer block states for each rotation (x rotation, y rotation)
+		// Use TRANSPARENT_BLOCK to prevent adjacent face culling (helm has gaps)
 		polymerStateNorth = PolymerBlockResourceUtils.requestBlock(
-			BlockModelType.FULL_BLOCK,
+			BlockModelType.TRANSPARENT_BLOCK,
 			PolymerBlockModel.of(BigBoats.id("block/helm"), 0, 0)
 		);
 		polymerStateSouth = PolymerBlockResourceUtils.requestBlock(
-			BlockModelType.FULL_BLOCK,
+			BlockModelType.TRANSPARENT_BLOCK,
 			PolymerBlockModel.of(BigBoats.id("block/helm"), 0, 180)
 		);
 		polymerStateEast = PolymerBlockResourceUtils.requestBlock(
-			BlockModelType.FULL_BLOCK,
+			BlockModelType.TRANSPARENT_BLOCK,
 			PolymerBlockModel.of(BigBoats.id("block/helm"), 0, 90)
 		);
 		polymerStateWest = PolymerBlockResourceUtils.requestBlock(
-			BlockModelType.FULL_BLOCK,
+			BlockModelType.TRANSPARENT_BLOCK,
 			PolymerBlockModel.of(BigBoats.id("block/helm"), 0, 270)
 		);
 
-		// Register split helm models for display entities (separate base and wheel)
-		// The wheel model is shifted so its center is at (8,8,8) for correct rotation
-		displayStateBase = PolymerBlockResourceUtils.requestBlock(
-			BlockModelType.FULL_BLOCK,
-			PolymerBlockModel.of(BigBoats.id("block/helm_base"))
-		);
-		displayStateWheel = PolymerBlockResourceUtils.requestBlock(
-			BlockModelType.FULL_BLOCK,
-			PolymerBlockModel.of(BigBoats.id("block/helm_wheel"))
-		);
-
-		// Debug: print registered display states
-		System.out.println("[big-boats] Registered helm display states:");
-		System.out.println("[big-boats]   base: " + displayStateBase);
-		System.out.println("[big-boats]   wheel: " + displayStateWheel);
-	}
-
-	/**
-	 * Gets the display-only BlockState for the helm base (pedestal + shafts).
-	 * Used by ShipElementHolder for split rendering.
-	 */
-	public static BlockState getDisplayStateBase() {
-		return displayStateBase;
-	}
-
-	/**
-	 * Gets the display-only BlockState for the helm wheel (wheel + handles).
-	 * The model is shifted so the wheel center is at block center for correct rotation.
-	 * Used by ShipElementHolder for split rendering with wheel animation.
-	 */
-	public static BlockState getDisplayStateWheel() {
-		return displayStateWheel;
 	}
 
 	@Override
@@ -124,25 +87,21 @@ public class HelmBlock extends HorizontalFacingBlock implements PolymerTexturedB
 
 	@Override
 	protected ActionResult onUse(BlockState state, World world, BlockPos pos, PlayerEntity player, BlockHitResult hit) {
-		if (!world.isClient() && player instanceof ServerPlayerEntity) {
-			System.out.println("[Helm] onUse() called at " + pos);
-			// Clicking helm starts driving a docked ship
-			// Find ship entity near this helm position (larger search radius for entity offset)
+		if (!world.isClient() && player instanceof ServerPlayerEntity serverPlayer) {
+			// Find docked ship whose helm position matches this block
 			var nearbyShips = world.getEntitiesByClass(
-				justfatlard.big_boats.ship.MultiBlockShipEntity.class,
-				new net.minecraft.util.math.Box(pos).expand(5),
-				ship -> ship.isDocked()
+				MultiBlockShipEntity.class,
+				new net.minecraft.util.math.Box(pos).expand(ShipConfig.DOCKED_HELM_SEARCH_RANGE),
+				MultiBlockShipEntity::isDocked
 			);
-			System.out.println("[Helm] Found " + nearbyShips.size() + " docked ships nearby");
 
-			if (!nearbyShips.isEmpty()) {
-				var ship = nearbyShips.get(0);
-				System.out.println("[Helm] Undocking and mounting ship");
-				ship.undock();
-				// Force mounting to bypass sneak check
-				boolean mounted = player.startRiding(ship, true, true);
-				System.out.println("[Helm] Mount result: " + mounted);
-				return ActionResult.SUCCESS;
+			for (var ship : nearbyShips) {
+				// Verify this ship's helm is at the clicked block position
+				BlockPos helmPos = ship.getHelmBlockPos();
+				if (helmPos != null && helmPos.equals(pos)) {
+					ship.tryMount(serverPlayer);
+					return ActionResult.SUCCESS;
+				}
 			}
 		}
 		return ActionResult.PASS;
@@ -166,6 +125,13 @@ public class HelmBlock extends HorizontalFacingBlock implements PolymerTexturedB
 	@Override
 	protected MapCodec<? extends HorizontalFacingBlock> getCodec() {
 		return CODEC;
+	}
+
+	private static final VoxelShape OUTLINE_SHAPE = Block.createCuboidShape(2, 0, 2, 14, 16, 14);
+
+	@Override
+	protected VoxelShape getOutlineShape(BlockState state, BlockView world, BlockPos pos, net.minecraft.block.ShapeContext context) {
+		return OUTLINE_SHAPE;
 	}
 
 	/**

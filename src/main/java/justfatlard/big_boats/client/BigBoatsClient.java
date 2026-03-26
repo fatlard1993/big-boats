@@ -4,6 +4,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.Environment;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.Perspective;
 import net.minecraft.entity.passive.PigEntity;
@@ -14,22 +15,25 @@ import net.minecraft.entity.passive.PigEntity;
  */
 @Environment(EnvType.CLIENT)
 public class BigBoatsClient implements ClientModInitializer {
-	// Track if we're currently riding a ship
-	private static boolean wasRidingShip = false;
+	// Whether the player is currently riding a ship (volatile: read from render thread in CameraMixin)
+	private static volatile boolean ridingShip = false;
 	// Store the perspective before we switched to ship mode
 	private static Perspective previousPerspective = null;
 
 	@Override
 	public void onInitializeClient() {
-		// Register tick handler to detect mount/dismount
 		ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
 
-		System.out.println("[big-boats] Client features loaded - ship camera adjustment enabled!");
+		// Reset state on disconnect to prevent stale camera perspective on reconnect
+		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+			ridingShip = false;
+			previousPerspective = null;
+		});
 	}
 
 	private void onClientTick(MinecraftClient client) {
 		if (client.player == null) {
-			wasRidingShip = false;
+			ridingShip = false;
 			previousPerspective = null;
 			return;
 		}
@@ -37,7 +41,7 @@ public class BigBoatsClient implements ClientModInitializer {
 		boolean isRidingShip = isPlayerRidingShip(client);
 
 		// Detect state change: just mounted a ship
-		if (isRidingShip && !wasRidingShip) {
+		if (isRidingShip && !ridingShip) {
 			// Save current perspective before switching
 			previousPerspective = client.options.getPerspective();
 
@@ -48,7 +52,7 @@ public class BigBoatsClient implements ClientModInitializer {
 		}
 
 		// Detect state change: just dismounted from ship
-		if (!isRidingShip && wasRidingShip) {
+		if (!isRidingShip && ridingShip) {
 			// Restore previous perspective
 			if (previousPerspective != null) {
 				client.options.setPerspective(previousPerspective);
@@ -56,7 +60,7 @@ public class BigBoatsClient implements ClientModInitializer {
 			}
 		}
 
-		wasRidingShip = isRidingShip;
+		ridingShip = isRidingShip;
 	}
 
 	/**
@@ -69,7 +73,9 @@ public class BigBoatsClient implements ClientModInitializer {
 		var vehicle = client.player.getVehicle();
 		if (vehicle == null) return false;
 
-		// Ships appear as invisible pigs to vanilla clients
+		// Ships appear as invisible saddled pigs via Polymer's entity disguise.
+		// See MultiBlockShipEntity.modifyRawTrackedData() for the server-side encoding.
+		// False-positive risk with other invisible pigs is low in practice.
 		if (vehicle instanceof PigEntity pig) {
 			return pig.isInvisible();
 		}
@@ -81,6 +87,6 @@ public class BigBoatsClient implements ClientModInitializer {
 	 * Returns true if player is currently riding a ship (for use by camera mixin).
 	 */
 	public static boolean isRidingShip() {
-		return wasRidingShip;
+		return ridingShip;
 	}
 }

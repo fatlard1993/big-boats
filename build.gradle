@@ -15,25 +15,18 @@ repositories {
 	maven { url 'https://maven.nucleoid.xyz' }
 }
 
-loom {
-	// Loom extension configuration
-}
-
 dependencies {
-	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-
-	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-	// Polymer for server-side items and entities
-	modImplementation include("eu.pb4:polymer-core:0.15.1+1.21.11")
-	modImplementation include("eu.pb4:polymer-resource-pack:0.15.1+1.21.11")
-	modImplementation include("eu.pb4:polymer-autohost:0.15.1+1.21.11")
-	modImplementation include("eu.pb4:polymer-virtual-entity:0.15.1+1.21.11")
-	modImplementation include("eu.pb4:polymer-blocks:0.15.1+1.21.11")
+	// Polymer for server-side block/entity rendering to vanilla clients
+	modImplementation include("eu.pb4:polymer-core:${project.polymer_version}")
+	modImplementation include("eu.pb4:polymer-resource-pack:${project.polymer_version}")
+	modImplementation include("eu.pb4:polymer-autohost:${project.polymer_version}")
+	modImplementation include("eu.pb4:polymer-virtual-entity:${project.polymer_version}")
+	modImplementation include("eu.pb4:polymer-blocks:${project.polymer_version}")
 }
 
 processResources {
@@ -61,14 +54,10 @@ jar {
 	}
 }
 
-// configure the maven publication
 publishing {
 	publications {
 		mavenJava(MavenPublication) {
 			from components.java
 		}
-	}
-
-	repositories {
 	}
 }

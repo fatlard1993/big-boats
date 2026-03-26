@@ -1,12 +1,14 @@
 package justfatlard.big_boats.mixin.client;
 
+import justfatlard.big_boats.client.BigBoatsClient;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.render.Camera;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.data.TrackedData;
 import net.minecraft.entity.passive.PigEntity;
-import net.minecraft.world.BlockView;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -20,19 +22,18 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 @Environment(EnvType.CLIENT)
 @Mixin(Camera.class)
 public abstract class CameraMixin {
+	private static final Logger LOGGER = LoggerFactory.getLogger(CameraMixin.class);
+
 	@Shadow
 	private Entity focusedEntity;
 
-	// Camera distance constants
-	private static final float BASE_DISTANCE = 4.0f;      // Default Minecraft 3rd person distance
-	private static final float MIN_SHIP_DISTANCE = 6.0f;  // Minimum distance for any ship
-	private static final float MAX_SHIP_DISTANCE = 20.0f; // Maximum distance cap
-	private static final float DISTANCE_PER_BLOCK = 0.15f; // Distance increase per block
+	// These are the canonical camera constants. ShipConfig references this location.
+	// They live here because CameraMixin runs on the client classloader where ShipConfig is unavailable.
+	private static final float MIN_CAMERA_DISTANCE = 6.0f;
+	private static final float MAX_CAMERA_DISTANCE = 20.0f;
+	private static final float CAMERA_DISTANCE_PER_BLOCK = 0.15f;
+	private static final int FALLBACK_BLOCK_COUNT = 10;
 
-	/**
-	 * Modifies the camera distance argument passed to clipToSpace when in 3rd person.
-	 * Detects if player is riding a ship and calculates distance based on ship size.
-	 */
 	@ModifyArg(
 		method = "update",
 		at = @At(
@@ -42,30 +43,15 @@ public abstract class CameraMixin {
 		index = 0
 	)
 	private float modifyThirdPersonDistance(float originalDistance) {
-		if (focusedEntity == null) {
+		if (!BigBoatsClient.isRidingShip() || focusedEntity == null) {
 			return originalDistance;
 		}
 
-		// Check if we're riding something
 		Entity vehicle = focusedEntity.getVehicle();
-		if (vehicle == null) {
-			return originalDistance;
-		}
-
-		// Ships appear as invisible pigs to vanilla clients via Polymer
 		if (vehicle instanceof PigEntity pig) {
-			// Check if it looks like our ship disguise (invisible pig)
-			if (pig.isInvisible()) {
-				// Get ship block count from the repurposed boost time field
-				int blockCount = getShipBlockCount(pig);
-
-				// Calculate dynamic camera distance based on ship size
-				// Larger ships get more distance for better visibility
-				float distance = MIN_SHIP_DISTANCE + (blockCount * DISTANCE_PER_BLOCK);
-
-				// Clamp to reasonable bounds
-				return Math.min(MAX_SHIP_DISTANCE, Math.max(MIN_SHIP_DISTANCE, distance));
-			}
+			int blockCount = getShipBlockCount(pig);
+			float distance = MIN_CAMERA_DISTANCE + (blockCount * CAMERA_DISTANCE_PER_BLOCK);
+			return Math.min(MAX_CAMERA_DISTANCE, Math.max(MIN_CAMERA_DISTANCE, distance));
 		}
 
 		return originalDistance;
@@ -79,9 +65,12 @@ public abstract class CameraMixin {
 		try {
 			TrackedData<Integer> boostTimeData = PigEntityAccessor.getBoostTimeData();
 			return pig.getDataTracker().get(boostTimeData);
-		} catch (Exception e) {
-			// Fallback if accessor fails
-			return 10; // Assume medium ship
+		} catch (RuntimeException e) {
+			// Broad catch intentional: tracked data access can fail if Polymer encoding is
+			// mismatched or Minecraft changes PigEntity's layout. Silent fallback is better
+			// than a render-thread crash — the camera just won't scale optimally.
+			LOGGER.debug("Failed to read ship block count from tracked data", e);
+			return FALLBACK_BLOCK_COUNT;
 		}
 	}
 }

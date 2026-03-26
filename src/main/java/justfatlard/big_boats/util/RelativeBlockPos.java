@@ -6,8 +6,19 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 
 /**
- * Represents a block position relative to the ship's helm (origin).
- * Used for storing ship structure and calculating world positions during movement.
+ * A block position relative to the ship's helm block, which is always at {@link #ORIGIN} (0, 0, 0).
+ *
+ * <p>All ship blocks are stored in this coordinate space. To convert to world coordinates,
+ * rotate by the ship's current yaw and add the helm's world position (helmX/helmY/helmZ).
+ * See {@link justfatlard.big_boats.util.ShipBlockUtils#relativeToWorld} for snapped (docked)
+ * transforms, and {@link #rotateY} for continuous (sailing) transforms.</p>
+ *
+ * <p>The helm is always at ORIGIN by convention, enforced by:
+ * <ul>
+ *   <li>{@link justfatlard.big_boats.ship.ShipBlock#isHelm()} checks equality with ORIGIN</li>
+ *   <li>{@link justfatlard.big_boats.detection.FloodFillDetector#detect} starts BFS from the helm position</li>
+ *   <li>Christening bottle targets the helm block as the origin point</li>
+ * </ul>
  */
 public record RelativeBlockPos(int x, int y, int z) {
 	public static final Codec<RelativeBlockPos> CODEC = RecordCodecBuilder.create(instance ->

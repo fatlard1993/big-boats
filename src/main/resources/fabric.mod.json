@@ -3,13 +3,13 @@
   "id": "big-boats-justfatlard",
   "version": "${version}",
   "name": "Big Boats",
-  "description": "Use a christening bottle to turn blocks into rideable boats!",
+  "description": "Build multi-block ships from any blocks and sail them with momentum-based physics.",
   "authors": [
     "justfatlard"
   ],
   "contact": {
-    "homepage": "",
-    "sources": ""
+    "sources": "https://github.com/justfatlard/big-boats",
+    "issues": "https://github.com/justfatlard/big-boats/issues"
   },
   "license": "MIT",
   "icon": "icon.png",
@@ -31,6 +31,9 @@
     "minecraft": "~1.21.11",
     "java": ">=21",
     "polymer-core": ">=0.15.0",
-    "polymer-resource-pack": ">=0.15.0"
+    "polymer-resource-pack": ">=0.15.0",
+    "polymer-blocks": ">=0.15.0",
+    "polymer-virtual-entity": ">=0.15.0",
+    "polymer-autohost": ">=0.15.0"
   }
 }
