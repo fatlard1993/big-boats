@@ -1,6 +1,5 @@
 package justfatlard.big_boats;
 
-import eu.pb4.polymer.core.api.entity.PolymerEntity;
 import justfatlard.big_boats.block.HelmBlock;
 import justfatlard.big_boats.detection.DetectionResult;
 import justfatlard.big_boats.detection.FloodFillDetector;
@@ -8,27 +7,27 @@ import justfatlard.big_boats.ship.MultiBlockShipEntity;
 import justfatlard.big_boats.ship.ShipBlock;
 import justfatlard.big_boats.ship.ShipConfig;
 import justfatlard.big_boats.util.ShipBlockUtils;
-import net.minecraft.block.BlockState;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.projectile.thrown.ThrownItemEntity;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.particle.ParticleTypes;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.world.World;
-import xyz.nucleoid.packettweaker.PacketContext;
+import net.minecraft.ChatFormatting;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrowableItemProjectile;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.entity.EntityTypeTest;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -40,19 +39,23 @@ import org.slf4j.LoggerFactory;
  * Throwable christening bottle projectile.
  * When it hits a valid ship (helm block with connected solid blocks),
  * it christens the ship. Otherwise, it returns to item form with an error message.
+ *
+ * <p>Rendered to Pandorical clients as a normal thrown item via
+ * {@code PandoricalApi.registerEntityRenderer(..., "thrown_item")}; see
+ * {@link BigBoats#onInitialize}.</p>
  */
-public class ChristeningBottleEntity extends ThrownItemEntity implements PolymerEntity {
+public class ChristeningBottleEntity extends ThrowableItemProjectile {
 	private static final Logger LOGGER = LoggerFactory.getLogger(ChristeningBottleEntity.class);
 
-	public ChristeningBottleEntity(EntityType<? extends ThrownItemEntity> entityType, World world) {
+	public ChristeningBottleEntity(EntityType<? extends ThrowableItemProjectile> entityType, Level world) {
 		super(entityType, world);
 	}
 
-	public ChristeningBottleEntity(World world, LivingEntity owner, ItemStack stack) {
+	public ChristeningBottleEntity(Level world, LivingEntity owner, ItemStack stack) {
 		super(BigBoats.CHRISTENING_BOTTLE_ENTITY_TYPE, owner, world, stack);
 	}
 
-	public ChristeningBottleEntity(World world, double x, double y, double z, ItemStack stack) {
+	public ChristeningBottleEntity(Level world, double x, double y, double z, ItemStack stack) {
 		super(BigBoats.CHRISTENING_BOTTLE_ENTITY_TYPE, x, y, z, world, stack);
 	}
 
@@ -62,37 +65,26 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 	}
 
 	@Override
-	public EntityType<?> getPolymerEntityType(PacketContext context) {
-		// Appear as a thrown splash potion to vanilla clients
-		return EntityType.SPLASH_POTION;
-	}
+	protected void onHit(HitResult hitResult) {
+		super.onHit(hitResult);
 
-	@Override
-	protected void onCollision(HitResult hitResult) {
-		super.onCollision(hitResult);
-
-		World world = this.getEntityWorld();
-		if (world.isClient()) {
+		Level world = this.level();
+		if (world.isClientSide()) {
 			return;
 		}
 
-		ServerWorld serverWorld = (ServerWorld) world;
-		BlockPos targetPos = null;
+		ServerLevel serverWorld = (ServerLevel) world;
+		BlockPos targetPos;
 
-		// Determine what we hit
-		if (hitResult.getType() == HitResult.Type.BLOCK) {
-			BlockHitResult blockHit = (BlockHitResult) hitResult;
+		if (hitResult instanceof BlockHitResult blockHit) {
 			targetPos = blockHit.getBlockPos();
-		} else if (hitResult.getType() == HitResult.Type.ENTITY) {
-			EntityHitResult entityHit = (EntityHitResult) hitResult;
-			targetPos = entityHit.getEntity().getBlockPos();
+		} else if (hitResult instanceof EntityHitResult entityHit) {
+			targetPos = entityHit.getEntity().blockPosition();
 		} else {
-			// Missed everything - just drop the bottle
-			failChristening(serverWorld, this.getBlockPos(), "Missed target");
+			failChristening(serverWorld, this.blockPosition(), "Missed target");
 			return;
 		}
 
-		// Try to find a helm block at or near the impact point
 		BlockPos helmPos = findHelmInStructure(world, targetPos);
 
 		if (helmPos == null) {
@@ -100,11 +92,9 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 			return;
 		}
 
-		// Get helm facing direction
 		BlockState helmState = world.getBlockState(helmPos);
-		Direction helmFacing = helmState.get(HelmBlock.FACING);
+		Direction helmFacing = helmState.getValue(HelmBlock.FACING);
 
-		// Run flood-fill detection
 		DetectionResult result = FloodFillDetector.detect(world, helmPos);
 
 		if (!(result instanceof DetectionResult.Success success)) {
@@ -119,9 +109,9 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 		for (ShipBlock block : success.blocks()) {
 			shipPositions.add(block.relativePos().toWorldPos(helmPos));
 		}
-		for (MultiBlockShipEntity existingShip : serverWorld.getEntitiesByClass(
-				MultiBlockShipEntity.class,
-				new Box(helmPos).expand(ShipConfig.SHIP_OVERLAP_SEARCH_RANGE),
+		for (MultiBlockShipEntity existingShip : serverWorld.getEntities(
+				EntityTypeTest.forClass(MultiBlockShipEntity.class),
+				new AABB(helmPos).inflate(ShipConfig.SHIP_OVERLAP_SEARCH_RANGE),
 				MultiBlockShipEntity::isDocked)) {
 			for (BlockPos existingPos : existingShip.getDockedBlockPositions()) {
 				if (shipPositions.contains(existingPos)) {
@@ -144,12 +134,11 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 	 * Searches for a helm block by BFS through connected ship-eligible blocks.
 	 * This allows hitting any part of the ship structure to christen it.
 	 */
-	private BlockPos findHelmInStructure(World world, BlockPos pos) {
+	private BlockPos findHelmInStructure(Level world, BlockPos pos) {
 		if (pos == null) {
 			return null;
 		}
 
-		// Check the hit position first
 		BlockState hitState = world.getBlockState(pos);
 		if (hitState.getBlock() instanceof HelmBlock) {
 			return pos;
@@ -161,7 +150,7 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 			startPos = pos;
 		} else {
 			for (Direction dir : Direction.values()) {
-				BlockPos adjacent = pos.offset(dir);
+				BlockPos adjacent = pos.relative(dir);
 				BlockState adjacentState = world.getBlockState(adjacent);
 				if (adjacentState.getBlock() instanceof HelmBlock) {
 					return adjacent;
@@ -181,35 +170,31 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 	}
 
 	/**
-	 * Called when christening fails - drops the bottle and notifies the player.
+	 * Called when christening fails: drops the bottle and notifies the player.
 	 */
-	private void failChristening(ServerWorld world, BlockPos pos, String errorMessage) {
-		// Play break sound
+	private void failChristening(ServerLevel world, BlockPos pos, String errorMessage) {
 		world.playSound(
 			null,
 			this.getX(), this.getY(), this.getZ(),
-			SoundEvents.BLOCK_GLASS_BREAK,
-			SoundCategory.PLAYERS,
+			SoundEvents.GLASS_BREAK,
+			SoundSource.PLAYERS,
 			1.0F, 0.8F
 		);
 
-		// Spawn failure particles (smoke puff)
-		world.spawnParticles(
+		world.sendParticles(
 			ParticleTypes.SMOKE,
 			this.getX(), this.getY(), this.getZ(),
 			10, 0.2, 0.2, 0.2, 0.02
 		);
 
-		// Drop the bottle as an item
-		this.dropItem(world, BigBoats.CHRISTENING_BOTTLE);
+		this.spawnAtLocation(world, BigBoats.CHRISTENING_BOTTLE);
 
 		LOGGER.debug("Christening failed at {}: {}", pos, errorMessage);
 
-		// Send error message to the thrower
-		if (this.getOwner() instanceof ServerPlayerEntity player) {
-			player.sendMessage(
-				Text.translatable("big-boats.christening.fail", errorMessage)
-					.formatted(Formatting.RED),
+		if (this.getOwner() instanceof ServerPlayer player) {
+			player.sendSystemMessage(
+				Component.translatable("big-boats.christening.fail", errorMessage)
+					.withStyle(ChatFormatting.RED),
 				false
 			);
 		}
@@ -218,30 +203,28 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 	}
 
 	/**
-	 * Called when christening succeeds - converts the structure to a ship entity.
+	 * Called when christening succeeds: converts the structure to a ship entity.
 	 */
-	private void successChristening(ServerWorld world, BlockPos helmPos, Direction helmFacing, DetectionResult.Success result) {
-		// Play christening sounds
+	private void successChristening(ServerLevel world, BlockPos helmPos, Direction helmFacing, DetectionResult.Success result) {
 		world.playSound(
 			null,
 			helmPos.getX() + 0.5, helmPos.getY() + 0.5, helmPos.getZ() + 0.5,
-			SoundEvents.ENTITY_SPLASH_POTION_BREAK,
-			SoundCategory.PLAYERS,
+			SoundEvents.SPLASH_POTION_BREAK,
+			SoundSource.PLAYERS,
 			1.0F, 1.0F
 		);
 
 		world.playSound(
 			null,
 			helmPos.getX() + 0.5, helmPos.getY() + 0.5, helmPos.getZ() + 0.5,
-			SoundEvents.ENTITY_PLAYER_LEVELUP,
-			SoundCategory.PLAYERS,
+			SoundEvents.PLAYER_LEVELUP,
+			SoundSource.PLAYERS,
 			0.5F, 1.2F
 		);
 
-		// Spawn particles at block positions
 		for (ShipBlock block : result.blocks()) {
 			BlockPos worldPos = block.relativePos().toWorldPos(helmPos);
-			world.spawnParticles(
+			world.sendParticles(
 				ParticleTypes.HAPPY_VILLAGER,
 				worldPos.getX() + 0.5, worldPos.getY() + 0.5, worldPos.getZ() + 0.5,
 				3, 0.3, 0.3, 0.3, 0.0
@@ -259,10 +242,10 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 		);
 
 		// Transfer custom name from christening bottle to ship
-		ItemStack bottleStack = this.getStack();
+		ItemStack bottleStack = this.getItem();
 		String shipName = null;
-		if (bottleStack.contains(net.minecraft.component.DataComponentTypes.CUSTOM_NAME)) {
-			Text customName = bottleStack.get(net.minecraft.component.DataComponentTypes.CUSTOM_NAME);
+		if (bottleStack.has(net.minecraft.core.component.DataComponents.CUSTOM_NAME)) {
+			Component customName = bottleStack.get(net.minecraft.core.component.DataComponents.CUSTOM_NAME);
 			if (customName != null) {
 				shipName = customName.getString();
 				ship.setShipName(shipName);
@@ -271,14 +254,13 @@ public class ChristeningBottleEntity extends ThrownItemEntity implements Polymer
 
 		// Initialize ship BEFORE spawning to prevent tick() firing on uninitialized state
 		ship.initializeShip(helmPos);
-		world.spawnEntity(ship);
+		world.addFreshEntity(ship);
 
-		// Notify the player with ship name if present
-		if (this.getOwner() instanceof ServerPlayerEntity player) {
-			Text message = shipName != null
-				? Text.translatable("big-boats.christening.success_named", shipName, result.blockCount())
-				: Text.translatable("big-boats.christening.success", result.blockCount());
-			player.sendMessage(message.copy().formatted(Formatting.GREEN), false);
+		if (this.getOwner() instanceof ServerPlayer player) {
+			Component message = shipName != null
+				? Component.translatable("big-boats.christening.success_named", shipName, result.blockCount())
+				: Component.translatable("big-boats.christening.success", result.blockCount());
+			player.sendSystemMessage(message.copy().withStyle(ChatFormatting.GREEN), false);
 		}
 
 		this.discard();

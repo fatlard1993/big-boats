@@ -3,10 +3,10 @@ package justfatlard.big_boats.detection;
 import justfatlard.big_boats.ship.ShipBlock;
 import justfatlard.big_boats.ship.ShipConfig;
 import justfatlard.big_boats.util.ShipBlockUtils;
-import net.minecraft.block.BlockState;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -33,7 +33,7 @@ public class FloodFillDetector {
 	 * @param helmPos The starting position (helm block)
 	 * @return DetectionResult containing all connected blocks or an error
 	 */
-	public static DetectionResult detect(World world, BlockPos helmPos) {
+	public static DetectionResult detect(Level world, BlockPos helmPos) {
 		List<ShipBlock> blocks = new ArrayList<>();
 		Set<BlockPos> visited = new HashSet<>();
 		Queue<BlockPos> queue = new ArrayDeque<>();
@@ -44,25 +44,23 @@ public class FloodFillDetector {
 		while (!queue.isEmpty() && blocks.size() < ShipConfig.MAX_BLOCKS) {
 			BlockPos pos = queue.poll();
 
-			// Skip positions in unloaded chunks — getBlockState returns air for
-			// unloaded chunks, which would silently truncate ships at chunk borders
-			if (!world.isChunkLoaded(pos)) {
+			// Skip positions in unloaded chunks: getBlockState returns air there,
+			// which would silently truncate ships at chunk borders
+			if (!world.isLoaded(pos)) {
 				continue;
 			}
 
 			BlockState state = world.getBlockState(pos);
 
-			// Check if this block is valid for ship construction
 			if (!ShipBlockUtils.isShipEligible(state)) {
 				continue;
 			}
 
-			// Add this block to the ship, including any block entity data
 			blocks.add(ShipBlock.fromWorld(world, pos, helmPos));
 
 			// Mark adjacent positions visited at enqueue time to prevent queue pollution
 			for (Direction direction : Direction.values()) {
-				BlockPos adjacent = pos.offset(direction);
+				BlockPos adjacent = pos.relative(direction);
 				if (!visited.contains(adjacent)) {
 					visited.add(adjacent);
 					queue.add(adjacent);
@@ -70,7 +68,6 @@ public class FloodFillDetector {
 			}
 		}
 
-		// Validate result
 		if (blocks.isEmpty()) {
 			return new DetectionResult.NoBlocks();
 		}
@@ -99,14 +96,14 @@ public class FloodFillDetector {
 	 * @param referencePos A reference position for calculating relative positions (usually helm)
 	 * @return GroundingResult indicating grounding status and any absorbable blocks
 	 */
-	public static GroundingResult detectGrounding(World world, Set<BlockPos> shipPositions, int currentShipSize, BlockPos referencePos) {
+	public static GroundingResult detectGrounding(Level world, Set<BlockPos> shipPositions, int currentShipSize, BlockPos referencePos) {
 		int availableCapacity = ShipConfig.MAX_BLOCKS - currentShipSize;
 
 		// Find all solid blocks adjacent to the ship that aren't part of the ship
 		Set<BlockPos> adjacentSolids = new HashSet<>();
 		for (BlockPos shipPos : shipPositions) {
 			for (Direction direction : Direction.values()) {
-				BlockPos adjacent = shipPos.offset(direction);
+				BlockPos adjacent = shipPos.relative(direction);
 				if (!shipPositions.contains(adjacent)) {
 					BlockState state = world.getBlockState(adjacent);
 					if (ShipBlockUtils.isShipEligible(state)) {
@@ -116,7 +113,6 @@ public class FloodFillDetector {
 			}
 		}
 
-		// No adjacent solid blocks - ship is floating freely
 		if (adjacentSolids.isEmpty()) {
 			return new GroundingResult.FreeFloating();
 		}
@@ -153,7 +149,7 @@ public class FloodFillDetector {
 			}
 
 			for (Direction direction : Direction.values()) {
-				BlockPos adjacent = pos.offset(direction);
+				BlockPos adjacent = pos.relative(direction);
 				if (!visited.contains(adjacent)) {
 					visited.add(adjacent);
 					queue.add(adjacent);
@@ -180,7 +176,7 @@ public class FloodFillDetector {
 	 * @param predicate Test applied to each block's state
 	 * @return The position of the first matching block, or null if not found
 	 */
-	public static BlockPos findBlock(World world, BlockPos startPos, Predicate<BlockState> predicate) {
+	public static BlockPos findBlock(Level world, BlockPos startPos, Predicate<BlockState> predicate) {
 		Queue<BlockPos> queue = new ArrayDeque<>();
 		Set<BlockPos> visited = new HashSet<>();
 		visited.add(startPos);
@@ -197,7 +193,7 @@ public class FloodFillDetector {
 
 			if (ShipBlockUtils.isShipEligible(state)) {
 				for (Direction dir : Direction.values()) {
-					BlockPos neighbor = pos.offset(dir);
+					BlockPos neighbor = pos.relative(dir);
 					if (!visited.contains(neighbor)) {
 						visited.add(neighbor);
 						queue.add(neighbor);

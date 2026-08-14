@@ -1,20 +1,15 @@
 # Big Boats
 
-A Minecraft Fabric mod (1.21.11) that lets you build and sail multi-block ships. Build any structure, add a helm, christen it, and sail away.
+A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any structure, add a helm, christen it, and sail away.
 
-Works with **vanilla clients** via [Polymer](https://github.com/Patbox/polymer). Optional client-side mod adds camera distance scaling and automatic third-person perspective when piloting.
-
-## Version
-
-**Minecraft:** 1.21.11
-**Fabric API:** Required
+Requires the **Pandorical** mod client-side. Ships are plain server-side entities with no vanilla-client disguise: their blocks are rendered to Pandorical clients as a single batch-rendered structure (via Pandorical's `structures()` API), and camera pull-back/third-person perspective while piloting is pushed automatically through Pandorical's camera API. There is no vanilla-client compatibility and no separate optional client mod; Pandorical is required to see or pilot a ship at all.
 
 ## Features
 
 ### Ship Building
 - **Build any structure** using standard Minecraft blocks
 - Ships can be up to **2,000 blocks** in size
-- Supports **block entities** (chests, furnaces, signs) - contents persist
+- Supports **block entities** (chests, furnaces, signs); contents persist
 - **Item frames and paintings** travel with the ship and restore on dock
 - **Doors, trapdoors, and fence gates** remain interactive while sailing
 
@@ -30,13 +25,13 @@ Works with **vanilla clients** via [Polymer](https://github.com/Patbox/polymer).
 
 ### Sailing
 - **WASD controls**: W/S for forward/back thrust, A/D to rotate
-- Ships have **momentum-based physics** - they accelerate and coast
+- Ships have **momentum-based physics**; they accelerate and coast
 - **Collision detection** stops ships at terrain and other ships (breaks through plants)
 - Ships **snap to grid** when you dismount for clean docking
 
 ### Docking System
 - Ships **auto-dock** when you dismount (places real blocks back)
-- Ships **auto-undock** when you board (converts to virtual display)
+- Ships **auto-undock** when you board (converts to a rendered Pandorical structure)
 - **Block absorption**: Small structures touching your ship may be absorbed when undocking
 - **Grounding detection**: Can't sail if connected to a large landmass
 - **Occupied check**: Only one pilot at a time
@@ -52,7 +47,7 @@ Thrown item that converts a block structure into a sailable ship entity.
 - 1x Glass Bottle
 
 ### Helm Block
-The ship's wheel - required for every ship. Place it facing the direction you want to sail.
+The ship's wheel, required for every ship. Place it facing the direction you want to sail.
 
 **Recipe:**
 ```
@@ -84,18 +79,18 @@ S = Stick, I = Iron Ingot, P = Any Planks
 
 ## Requirements
 
-- Minecraft 1.21.11
-- Fabric Loader
-- Fabric API
-- [Polymer](https://github.com/Patbox/polymer) (bundled inside the mod JAR)
+Targets the Minecraft, Fabric Loader, Fabric API, and Java versions declared in this mod's `gradle.properties`; check there for the exact currently-supported version.
+
+## Pandorical
+
+Two things route through it:
+
+- **Ship rendering**: a ship's blocks are rendered as a single batch-rendered Pandorical structure, posed and moved each tick to follow the ship's position and rotation. The ship entity itself is registered with Pandorical's `"invisible"` renderer and draws nothing on its own; only the structure is visible.
+- **Piloting camera**: camera pull-back distance and third-person-back perspective while piloting are pushed directly to the player via Pandorical's camera API on mount/dismount.
 
 ## Installation
 
-1. Install Fabric for Minecraft 1.21.11
-2. Download and place in your `mods` folder:
-   - Fabric API
-   - This mod's JAR file
-3. Launch the game (works server-side only; optional client install adds camera scaling)
+Install alongside its declared dependencies (see `fabric.mod.json`), including Pandorical client-side.
 
 ## Download
 
@@ -129,4 +124,4 @@ Report bugs and request features on [GitHub Issues](https://github.com/justfatla
 
 ## License
 
-MIT License - See LICENSE file for details.
+MIT License; see the LICENSE file for details.

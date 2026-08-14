@@ -2,8 +2,8 @@ package justfatlard.big_boats.util;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * A block position relative to the ship's helm block, which is always at {@link #ORIGIN} (0, 0, 0).
@@ -54,20 +54,20 @@ public record RelativeBlockPos(int x, int y, int z) {
 	}
 
 	/**
-	 * Converts to a Vec3d offset for entity positioning.
+	 * Converts to a Vec3 offset for entity positioning.
 	 */
-	public Vec3d toVec3d() {
-		return new Vec3d(x, y, z);
+	public Vec3 toVec3d() {
+		return new Vec3(x, y, z);
 	}
 
 	/**
 	 * Rotates this position around the Y axis by the given yaw (in radians).
 	 */
-	public Vec3d rotateY(float yawRadians) {
+	public Vec3 rotateY(float yawRadians) {
 		double cos = Math.cos(yawRadians);
 		double sin = Math.sin(yawRadians);
 		double newX = x * cos - z * sin;
 		double newZ = x * sin + z * cos;
-		return new Vec3d(newX, y, newZ);
+		return new Vec3(newX, y, newZ);
 	}
 }

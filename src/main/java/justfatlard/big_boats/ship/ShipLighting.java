@@ -1,13 +1,13 @@
 package justfatlard.big_boats.ship;
 
 import justfatlard.big_boats.util.RelativeBlockPos;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.LightBlock;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LightBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -18,7 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Manages ship light sources — detecting light-emitting blocks and placing/updating
+ * Manages ship light sources: detects light-emitting blocks and places/updates
  * invisible {@link Blocks#LIGHT} blocks as the ship moves.
  *
  * <p>Lifecycle: {@link #detectFromBlocks} scans for luminous blocks. {@link #spawnLightBlocks}
@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory;
  * (places new before removing old to minimize crash-unsafe windows). {@link #remove} cleans
  * up on dock or entity removal.</p>
  *
- * <p>Light positions are serialized for crash recovery — if the server stops while sailing,
+ * <p>Light positions are serialized for crash recovery: if the server stops while sailing,
  * {@link #cleanupLightPositions} removes stale lights on reload.</p>
  */
 public class ShipLighting {
@@ -45,7 +45,7 @@ public class ShipLighting {
 		lightSources.clear();
 
 		for (ShipBlock block : blocks) {
-			int lightLevel = block.blockState().getLuminance();
+			int lightLevel = block.blockState().getLightEmission();
 			if (lightLevel > 0) {
 				lightSources.add(new LightSource(block.relativePos(), lightLevel));
 			}
@@ -59,17 +59,17 @@ public class ShipLighting {
 	 * Detects light sources and spawns light blocks at their current positions.
 	 * Call when undocking.
 	 */
-	public void spawnLightBlocks(ServerWorld world, ShipPose pose) {
+	public void spawnLightBlocks(ServerLevel world, ShipPose pose) {
 		Set<BlockPos> newPositions = new HashSet<>();
 
 		for (LightSource source : lightSources) {
-			Vec3d worldPos = pose.toWorld(source.relativePos());
-			BlockPos lightPos = BlockPos.ofFloored(worldPos.x, worldPos.y, worldPos.z);
+			Vec3 worldPos = pose.toWorld(source.relativePos());
+			BlockPos lightPos = BlockPos.containing(worldPos.x, worldPos.y, worldPos.z);
 
 			if (world.getBlockState(lightPos).isAir()) {
-				BlockState lightBlock = Blocks.LIGHT.getDefaultState()
-					.with(LightBlock.LEVEL_15, source.lightLevel());
-				world.setBlockState(lightPos, lightBlock, Block.NOTIFY_LISTENERS);
+				BlockState lightBlock = Blocks.LIGHT.defaultBlockState()
+					.setValue(LightBlock.LEVEL, source.lightLevel());
+				world.setBlock(lightPos, lightBlock, Block.UPDATE_CLIENTS);
 				newPositions.add(lightPos);
 			}
 		}
@@ -83,18 +83,18 @@ public class ShipLighting {
 	 * Updates light block positions as the ship moves/rotates.
 	 * Places new lights before removing old ones to avoid crash-unsafe window.
 	 */
-	public void updatePositions(ServerWorld world, ShipPose pose) {
+	public void updatePositions(ServerLevel world, ShipPose pose) {
 		if (lightSources.isEmpty()) return;
 
 		Set<BlockPos> newPositions = new HashSet<>();
 		for (LightSource source : lightSources) {
-			Vec3d worldPos = pose.toWorld(source.relativePos());
-			BlockPos lightPos = BlockPos.ofFloored(worldPos.x, worldPos.y, worldPos.z);
+			Vec3 worldPos = pose.toWorld(source.relativePos());
+			BlockPos lightPos = BlockPos.containing(worldPos.x, worldPos.y, worldPos.z);
 
 			if (world.getBlockState(lightPos).isAir()) {
-				BlockState lightBlock = Blocks.LIGHT.getDefaultState()
-					.with(LightBlock.LEVEL_15, source.lightLevel());
-				world.setBlockState(lightPos, lightBlock, Block.NOTIFY_LISTENERS);
+				BlockState lightBlock = Blocks.LIGHT.defaultBlockState()
+					.setValue(LightBlock.LEVEL, source.lightLevel());
+				world.setBlock(lightPos, lightBlock, Block.UPDATE_CLIENTS);
 				newPositions.add(lightPos);
 			}
 		}
@@ -102,13 +102,13 @@ public class ShipLighting {
 		for (BlockPos pos : placedLightPositions) {
 			if (!newPositions.contains(pos)) {
 				BlockState state = world.getBlockState(pos);
-				if (state.isOf(Blocks.LIGHT)) {
-					world.setBlockState(pos, Blocks.AIR.getDefaultState(), Block.NOTIFY_LISTENERS);
+				if (state.getBlock() == Blocks.LIGHT) {
+					world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
 				}
 			}
 		}
 
-		// Assign as immutable snapshot — safe for concurrent read by chunk-saving thread
+		// Assign as immutable snapshot: safe for concurrent read by the chunk-saving thread
 		placedLightPositions = Set.copyOf(newPositions);
 
 		lastLightUpdatePos = pose.helmBlockPos();
@@ -119,11 +119,11 @@ public class ShipLighting {
 	 * Removes all placed light blocks.
 	 * Call when docking or removing the ship.
 	 */
-	public void remove(ServerWorld world) {
+	public void remove(ServerLevel world) {
 		for (BlockPos pos : placedLightPositions) {
 			BlockState state = world.getBlockState(pos);
-			if (state.isOf(Blocks.LIGHT)) {
-				world.setBlockState(pos, Blocks.AIR.getDefaultState(), Block.NOTIFY_LISTENERS);
+			if (state.getBlock() == Blocks.LIGHT) {
+				world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
 			}
 		}
 		placedLightPositions = Set.of();
@@ -142,18 +142,15 @@ public class ShipLighting {
 	 * Removes LIGHT blocks at the given positions.
 	 * Used for crash recovery when light positions were serialized but not cleaned up.
 	 */
-	public static void cleanupLightPositions(ServerWorld world, List<BlockPos> positions) {
+	public static void cleanupLightPositions(ServerLevel world, List<BlockPos> positions) {
 		for (BlockPos pos : positions) {
 			BlockState state = world.getBlockState(pos);
-			if (state.isOf(Blocks.LIGHT)) {
-				world.setBlockState(pos, Blocks.AIR.getDefaultState(), Block.NOTIFY_LISTENERS);
+			if (state.getBlock() == Blocks.LIGHT) {
+				world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
 			}
 		}
 	}
 
-	/**
-	 * Checks if light positions need updating based on ship pose.
-	 */
 	public boolean needsUpdate(ShipPose pose) {
 		if (lightSources.isEmpty()) {
 			return false;

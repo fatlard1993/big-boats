@@ -1,25 +1,25 @@
 package justfatlard.big_boats.ship;
 
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.DoorBlock;
-import net.minecraft.block.FenceGateBlock;
-import net.minecraft.block.TrapdoorBlock;
-import net.minecraft.block.enums.DoubleBlockHalf;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.state.property.Properties;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.TrapDoorBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.List;
 
 /**
  * Handles player interaction with blocks on a moving ship.
- * Stateless helper — call methods with the ship's current state.
+ * Stateless helper; call methods with the ship's current state.
  */
 public final class ShipInteraction {
 
@@ -31,9 +31,9 @@ public final class ShipInteraction {
 	 * MAX_BLOCKS limit of 2000. If this limit increases significantly, consider
 	 * spatial indexing (octree or spatial hash).
 	 */
-	public static int findLookedAtBlock(PlayerEntity player, List<ShipBlock> blocks, ShipPose pose) {
-		Vec3d eyePos = player.getEyePos();
-		Vec3d lookVec = player.getRotationVec(1.0f);
+	public static int findLookedAtBlock(Player player, List<ShipBlock> blocks, ShipPose pose) {
+		Vec3 eyePos = player.getEyePosition();
+		Vec3 lookVec = player.getViewVector(1.0f);
 		double reach = ShipConfig.PLAYER_REACH;
 
 		int closestIndex = -1;
@@ -42,15 +42,15 @@ public final class ShipInteraction {
 		for (int i = 0; i < blocks.size(); i++) {
 			ShipBlock block = blocks.get(i);
 
-			Vec3d worldPos = pose.toWorld(block.relativePos());
+			Vec3 worldPos = pose.toWorld(block.relativePos());
 
 			double worldX = worldPos.x;
 			double worldY = worldPos.y;
 			double worldZ = worldPos.z;
 
-			Box blockBox = new Box(worldX, worldY, worldZ, worldX + 1, worldY + 1, worldZ + 1);
+			AABB blockBox = new AABB(worldX, worldY, worldZ, worldX + 1, worldY + 1, worldZ + 1);
 
-			java.util.Optional<Vec3d> hit = blockBox.raycast(eyePos, eyePos.add(lookVec.multiply(reach)));
+			java.util.Optional<Vec3> hit = blockBox.clip(eyePos, eyePos.add(lookVec.scale(reach)));
 			if (hit.isPresent()) {
 				double dist = hit.get().distanceTo(eyePos);
 				if (dist < closestDist) {
@@ -69,70 +69,70 @@ public final class ShipInteraction {
 	 *
 	 * @param blockUpdater callback to update the block state in the ship's block list and display
 	 */
-	public static ActionResult tryInteractWithBlock(List<ShipBlock> blocks, int blockIndex,
-													World world, Vec3d soundPos,
+	public static InteractionResult tryInteractWithBlock(List<ShipBlock> blocks, int blockIndex,
+													Level world, Vec3 soundPos,
 													BlockUpdater blockUpdater) {
 		if (blockIndex < 0 || blockIndex >= blocks.size()) {
-			return ActionResult.PASS;
+			return InteractionResult.PASS;
 		}
 
 		ShipBlock shipBlock = blocks.get(blockIndex);
 		BlockState state = shipBlock.blockState();
 
 		if (state.getBlock() instanceof DoorBlock) {
-			// Iron doors require redstone in vanilla — don't toggle by hand
-			if (state.isOf(Blocks.IRON_DOOR)) {
-				return ActionResult.PASS;
+			// Iron doors require redstone in vanilla; don't toggle by hand
+			if (state.getBlock() == Blocks.IRON_DOOR) {
+				return InteractionResult.PASS;
 			}
 
-			BlockState newState = state.cycle(Properties.OPEN);
+			BlockState newState = state.cycle(BlockStateProperties.OPEN);
 			blockUpdater.update(blockIndex, newState);
 
-			boolean isOpen = newState.get(Properties.OPEN);
+			boolean isOpen = newState.getValue(BlockStateProperties.OPEN);
 			world.playSound(null, soundPos.x, soundPos.y, soundPos.z,
-				isOpen ? SoundEvents.BLOCK_WOODEN_DOOR_OPEN : SoundEvents.BLOCK_WOODEN_DOOR_CLOSE,
-				SoundCategory.BLOCKS, 1.0f, 1.0f);
+				isOpen ? SoundEvents.WOODEN_DOOR_OPEN : SoundEvents.WOODEN_DOOR_CLOSE,
+				SoundSource.BLOCKS, 1.0f, 1.0f);
 
 			toggleDoorOtherHalf(blocks, blockIndex, state, isOpen, blockUpdater);
-			return ActionResult.SUCCESS;
+			return InteractionResult.SUCCESS;
 		}
 
-		if (state.getBlock() instanceof TrapdoorBlock) {
-			// Iron trapdoors require redstone in vanilla — don't toggle by hand
-			if (state.isOf(Blocks.IRON_TRAPDOOR)) {
-				return ActionResult.PASS;
+		if (state.getBlock() instanceof TrapDoorBlock) {
+			// Iron trapdoors require redstone in vanilla; don't toggle by hand
+			if (state.getBlock() == Blocks.IRON_TRAPDOOR) {
+				return InteractionResult.PASS;
 			}
 
-			BlockState newState = state.cycle(Properties.OPEN);
+			BlockState newState = state.cycle(BlockStateProperties.OPEN);
 			blockUpdater.update(blockIndex, newState);
 
-			boolean isOpen = newState.get(Properties.OPEN);
+			boolean isOpen = newState.getValue(BlockStateProperties.OPEN);
 			world.playSound(null, soundPos.x, soundPos.y, soundPos.z,
-				isOpen ? SoundEvents.BLOCK_WOODEN_TRAPDOOR_OPEN : SoundEvents.BLOCK_WOODEN_TRAPDOOR_CLOSE,
-				SoundCategory.BLOCKS, 1.0f, 1.0f);
+				isOpen ? SoundEvents.WOODEN_TRAPDOOR_OPEN : SoundEvents.WOODEN_TRAPDOOR_CLOSE,
+				SoundSource.BLOCKS, 1.0f, 1.0f);
 
-			return ActionResult.SUCCESS;
+			return InteractionResult.SUCCESS;
 		}
 
 		if (state.getBlock() instanceof FenceGateBlock) {
-			BlockState newState = state.cycle(Properties.OPEN);
+			BlockState newState = state.cycle(BlockStateProperties.OPEN);
 			blockUpdater.update(blockIndex, newState);
 
-			boolean isOpen = newState.get(Properties.OPEN);
+			boolean isOpen = newState.getValue(BlockStateProperties.OPEN);
 			world.playSound(null, soundPos.x, soundPos.y, soundPos.z,
-				isOpen ? SoundEvents.BLOCK_FENCE_GATE_OPEN : SoundEvents.BLOCK_FENCE_GATE_CLOSE,
-				SoundCategory.BLOCKS, 1.0f, 1.0f);
+				isOpen ? SoundEvents.FENCE_GATE_OPEN : SoundEvents.FENCE_GATE_CLOSE,
+				SoundSource.BLOCKS, 1.0f, 1.0f);
 
-			return ActionResult.SUCCESS;
+			return InteractionResult.SUCCESS;
 		}
 
-		return ActionResult.PASS;
+		return InteractionResult.PASS;
 	}
 
 	private static void toggleDoorOtherHalf(List<ShipBlock> blocks, int doorIndex,
 											BlockState doorState, boolean isOpen,
 											BlockUpdater blockUpdater) {
-		DoubleBlockHalf half = doorState.get(Properties.DOUBLE_BLOCK_HALF);
+		DoubleBlockHalf half = doorState.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF);
 		int yOffset = (half == DoubleBlockHalf.LOWER) ? 1 : -1;
 
 		ShipBlock doorBlock = blocks.get(doorIndex);
@@ -147,7 +147,7 @@ public final class ShipInteraction {
 				&& block.relativePos().z() == doorBlock.relativePos().z()
 				&& block.blockState().getBlock() instanceof DoorBlock) {
 
-				BlockState otherState = block.blockState().with(Properties.OPEN, isOpen);
+				BlockState otherState = block.blockState().setValue(BlockStateProperties.OPEN, isOpen);
 				blockUpdater.update(i, otherState);
 				break;
 			}

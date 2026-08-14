@@ -10,7 +10,7 @@ public final class ShipConfig {
 	// Acceleration per tick when W is held. Low value gives ships inertia/momentum.
 	public static final double ACCELERATION = 0.008;
 
-	// Maximum speed in blocks/tick. 0.18 ≈ 3.6 blocks/sec — brisk but controllable.
+	// Maximum speed in blocks/tick. 0.18 ≈ 3.6 blocks/sec; brisk but controllable.
 	public static final double MAX_SPEED = 0.18;
 
 	// Multiplied against velocity each tick. 0.98 = 2% slowdown/tick ≈ 1 second to stop from max speed.
@@ -76,9 +76,11 @@ public final class ShipConfig {
 	public static final double DOCKED_HELM_SEARCH_RANGE = 5.0;
 	public static final double SHIP_OVERLAP_SEARCH_RANGE = 50.0;
 
-	// Camera constants live in CameraMixin (client classloader) — not here.
-	// CameraMixin runs in a separate classloader where server-side classes are unavailable.
-	// See CameraMixin for MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE, etc.
+	// --- Camera (Pandorical CameraApi hints, pushed server-side on mount/dismount) ---
+	// Distance scales with ship size: MIN + blockCount * PER_BLOCK, clamped to [MIN, MAX].
+	public static final float MIN_CAMERA_DISTANCE = 6.0f;
+	public static final float MAX_CAMERA_DISTANCE = 20.0f;
+	public static final float CAMERA_DISTANCE_PER_BLOCK = 0.15f;
 
 	private ShipConfig() {}
 }

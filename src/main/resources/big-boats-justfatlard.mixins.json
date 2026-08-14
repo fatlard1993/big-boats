@@ -1,13 +1,12 @@
 {
   "required": true,
   "package": "justfatlard.big_boats.mixin",
-  "compatibilityLevel": "JAVA_21",
+  "compatibilityLevel": "JAVA_25",
   "mixins": [
-    "ServerPlayNetworkHandlerMixin"
-  ],
-  "client": [
-    "client.CameraMixin",
-    "client.PigEntityAccessor"
+    "ServerGamePacketListenerMixin",
+    "InteractionAccessor",
+    "BlockAttachedEntityAccessor",
+    "HangingEntityAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

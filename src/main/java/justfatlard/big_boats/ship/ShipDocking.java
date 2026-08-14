@@ -1,32 +1,36 @@
 package justfatlard.big_boats.ship;
 
+import justfatlard.big_boats.mixin.BlockAttachedEntityAccessor;
+import justfatlard.big_boats.mixin.HangingEntityAccessor;
 import justfatlard.big_boats.util.RelativeBlockPos;
+import justfatlard.big_boats.util.ShipBlockNbtUtil;
 import justfatlard.big_boats.util.ShipBlockUtils;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.ItemEntity;
-import net.minecraft.entity.SpawnReason;
-import net.minecraft.entity.decoration.BlockAttachedEntity;
-import net.minecraft.inventory.Inventory;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.storage.NbtWriteView;
-import net.minecraft.util.BlockRotation;
-import net.minecraft.util.ErrorReporter;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.Container;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.EntitySpawnRequest;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.decoration.BlockAttachedEntity;
+import net.minecraft.world.entity.decoration.HangingEntity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.TypedEntityData;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.storage.TagValueOutput;
+import net.minecraft.world.phys.AABB;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -68,7 +72,7 @@ public class ShipDocking {
 	public void recordPositions(List<ShipBlock> blocks, BlockPos helmPos) {
 		List<BlockPos> positions = new ArrayList<>();
 		for (ShipBlock block : blocks) {
-			positions.add(helmPos.add(
+			positions.add(helmPos.offset(
 				block.relativePos().x(),
 				block.relativePos().y(),
 				block.relativePos().z()
@@ -80,12 +84,12 @@ public class ShipDocking {
 	/**
 	 * Places ship blocks back into the world. Returns dock statistics.
 	 */
-	public DockStats placeBlocks(ServerWorld world, List<ShipBlock> blocks,
+	public DockStats placeBlocks(ServerLevel world, List<ShipBlock> blocks,
 								  double helmX, double helmY, double helmZ,
 								  ShipBlockUtils.SnappedRotation snap) {
 		int cos = snap.cos();
 		int sin = snap.sin();
-		BlockRotation blockRotation = ShipBlockUtils.yawToBlockRotation(snap.yawDegrees());
+		net.minecraft.world.level.block.Rotation blockRotation = ShipBlockUtils.yawToBlockRotation(snap.yawDegrees());
 
 		List<BlockPos> newDockedPositions = new ArrayList<>();
 		int blockedCount = 0;
@@ -96,16 +100,16 @@ public class ShipDocking {
 			BlockState rotatedState = block.blockState().rotate(blockRotation);
 			BlockState existing = world.getBlockState(worldPos);
 
-			if (existing.isAir() || existing.isLiquid()) {
-				world.setBlockState(worldPos, rotatedState);
+			if (existing.isAir() || existing.liquid()) {
+				world.setBlock(worldPos, rotatedState, Block.UPDATE_ALL);
 				newDockedPositions.add(worldPos);
 
 				if (block.hasBlockEntityData()) {
-					NbtCompound savedNbt = block.blockEntityData().get();
-					BlockEntity restored = BlockEntity.createFromNbt(worldPos, rotatedState, savedNbt, world.getRegistryManager());
+					CompoundTag savedNbt = block.blockEntityData().get();
+					BlockEntity restored = BlockEntity.loadStatic(worldPos, rotatedState, savedNbt, world.registryAccess());
 					if (restored != null) {
-						world.addBlockEntity(restored);
-						// Verify the block entity was actually added — addBlockEntity can fail
+						world.setBlockEntity(restored);
+						// Verify the block entity was actually added: setBlockEntity can fail
 						// silently if a block entity already exists at that position
 						if (world.getBlockEntity(worldPos) == null) {
 							LOGGER.warn("Block entity at {} was not added to world — salvaging contents", worldPos);
@@ -134,44 +138,38 @@ public class ShipDocking {
 	/**
 	 * Restores decoration entities (item frames, paintings) into the world.
 	 */
-	public void restoreDecorations(ServerWorld world, double helmX, double helmY, double helmZ,
+	public void restoreDecorations(ServerLevel world, double helmX, double helmY, double helmZ,
 									ShipBlockUtils.SnappedRotation snap) {
 		if (decorations.isEmpty()) return;
 
 		int cos = snap.cos();
 		int sin = snap.sin();
-		BlockRotation blockRotation = ShipBlockUtils.yawToBlockRotation(snap.yawDegrees());
+		net.minecraft.world.level.block.Rotation blockRotation = ShipBlockUtils.yawToBlockRotation(snap.yawDegrees());
 
 		for (ShipDecoration decoration : decorations) {
 			BlockPos worldAttachPos = ShipBlockUtils.relativeToWorld(
 				decoration.attachmentPos(), helmX, helmY, helmZ, cos, sin);
 			Direction worldFacing = blockRotation.rotate(decoration.facing());
 
-			NbtCompound nbt = decoration.entityNbt().copy();
-
-			// Patch block_pos and facing using correct codecs per entity type.
-			// ItemFrameEntity uses "Facing" (Direction.INDEX_CODEC, integer 0-5).
-			// PaintingEntity uses "facing" (Direction.HORIZONTAL_QUARTER_TURNS_CODEC).
-			NbtWriteView patcher = NbtWriteView.create(ErrorReporter.EMPTY);
-			patcher.put("block_pos", BlockPos.CODEC, worldAttachPos);
-			if (nbt.contains("Facing")) {
-				patcher.put("Facing", Direction.INDEX_CODEC, worldFacing);
-			}
-			if (nbt.contains("facing")) {
-				patcher.put("facing", Direction.HORIZONTAL_QUARTER_TURNS_CODEC, worldFacing);
-			}
-			NbtCompound patchNbt = patcher.getNbt();
-			for (String key : patchNbt.getKeys()) {
-				nbt.put(key, patchNbt.get(key));
-			}
+			CompoundTag nbt = decoration.entityNbt().copy();
 			nbt.remove("UUID");
 
-			Entity loaded = EntityType.loadEntityWithPassengers(nbt, world, SpawnReason.LOAD, entity -> {
-				entity.setUuid(UUID.randomUUID());
-				return entity;
-			});
+			// Reconstruct the entity at its OLD (docked) attachment position/facing exactly as
+			// captured, then reposition it via accessor mixins rather than patching raw NBT
+			// tags: the item frame/painting NBT format (tag names, facing encoding) isn't
+			// stable across mapping/version changes, but the public entity object always is.
+			Entity loaded = EntityType.loadEntityRecursive(nbt, world,
+				new EntitySpawnRequest(EntitySpawnReason.LOAD, false), entity -> {
+					entity.setUUID(UUID.randomUUID());
+					if (entity instanceof HangingEntity hanging) {
+						((BlockAttachedEntityAccessor) hanging).setAttachedPos(worldAttachPos);
+						((HangingEntityAccessor) hanging).invokeSetDirection(worldFacing);
+						((HangingEntityAccessor) hanging).invokeRecalculateBoundingBox();
+					}
+					return entity;
+				});
 			if (loaded != null) {
-				world.spawnEntity(loaded);
+				world.addFreshEntity(loaded);
 			}
 		}
 		LOGGER.debug("Restored {} decoration entities", decorations.size());
@@ -184,20 +182,18 @@ public class ShipDocking {
 	 *
 	 * @param posToBlockIndex mapping from world position to block index (caller computes this)
 	 */
-	public List<ShipBlock> removeBlocks(ServerWorld world, List<ShipBlock> blocks,
+	public List<ShipBlock> removeBlocks(ServerLevel world, List<ShipBlock> blocks,
 										 double helmX, double helmY, double helmZ,
 										 ShipBlockUtils.SnappedRotation snap,
 										 Map<BlockPos, Integer> posToBlockIndex) {
 		int cos = snap.cos();
 		int sin = snap.sin();
-		BlockRotation inverseRotation = ShipBlockUtils.yawToBlockRotation(-snap.yawDegrees());
+		net.minecraft.world.level.block.Rotation inverseRotation = ShipBlockUtils.yawToBlockRotation(-snap.yawDegrees());
 
-		// Ensure dockedBlockPositions is populated
 		if (dockedBlockPositions.isEmpty()) {
 			dockedBlockPositions = List.copyOf(posToBlockIndex.keySet());
 		}
 
-		// Capture block-attached decoration entities (item frames, paintings)
 		captureDecorations(world, posToBlockIndex, helmX, helmY, helmZ, cos, sin, inverseRotation);
 
 		// Save block entity data and remove all placed blocks.
@@ -209,16 +205,18 @@ public class ShipDocking {
 				if (blockEntity != null) {
 					Integer blockIndex = posToBlockIndex.get(pos);
 					if (blockIndex != null) {
-						NbtCompound nbt = blockEntity.createNbtWithIdentifyingData(world.getRegistryManager());
+						TagValueOutput output = ShipBlockNbtUtil.newOutput(world);
+						blockEntity.saveWithId(output);
+						CompoundTag nbt = output.buildResult();
 						ShipBlock oldBlock = updatedBlocks.get(blockIndex);
 						updatedBlocks.set(blockIndex, oldBlock.withBlockEntityData(nbt));
 					}
-					if (blockEntity instanceof Inventory inventory) {
-						inventory.clear();
+					if (blockEntity instanceof Container container) {
+						container.clearContent();
 					}
 					world.removeBlockEntity(pos);
 				}
-				world.setBlockState(pos, Blocks.AIR.getDefaultState(), Block.NOTIFY_LISTENERS);
+				world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
 			}
 		}
 
@@ -226,9 +224,9 @@ public class ShipDocking {
 		return List.copyOf(updatedBlocks);
 	}
 
-	private void captureDecorations(ServerWorld world, Map<BlockPos, Integer> posToBlockIndex,
+	private void captureDecorations(ServerLevel world, Map<BlockPos, Integer> posToBlockIndex,
 									 double helmX, double helmY, double helmZ,
-									 int cos, int sin, BlockRotation inverseRotation) {
+									 int cos, int sin, net.minecraft.world.level.block.Rotation inverseRotation) {
 		// Build bounding box from block positions
 		double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE, minZ = Double.MAX_VALUE;
 		double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
@@ -240,19 +238,20 @@ public class ShipDocking {
 			maxY = Math.max(maxY, pos.getY() + 1);
 			maxZ = Math.max(maxZ, pos.getZ() + 1);
 		}
-		Box searchBox = new Box(minX - 1, minY - 1, minZ - 1, maxX + 1, maxY + 1, maxZ + 1);
+		AABB searchBox = new AABB(minX - 1, minY - 1, minZ - 1, maxX + 1, maxY + 1, maxZ + 1);
 
 		List<ShipDecoration> capturedDecorations = new ArrayList<>();
 
-		for (BlockAttachedEntity attachedEntity : world.getEntitiesByClass(
-				BlockAttachedEntity.class, searchBox, e -> !e.isRemoved())) {
-			BlockPos attachedPos = attachedEntity.getAttachedBlockPos();
-			// Check attached pos AND all neighbors — getAttachedBlockPos() returns the
+		for (BlockAttachedEntity attachedEntity : world.getEntities(
+				net.minecraft.world.level.entity.EntityTypeTest.forClass(BlockAttachedEntity.class),
+				searchBox, e -> !e.isRemoved())) {
+			BlockPos attachedPos = attachedEntity.getPos();
+			// Check attached pos AND all neighbors: getPos() returns the
 			// air block the entity occupies, not the support block behind it
 			boolean attachedToShip = posToBlockIndex.containsKey(attachedPos);
 			if (!attachedToShip) {
 				for (Direction dir : Direction.values()) {
-					if (posToBlockIndex.containsKey(attachedPos.offset(dir))) {
+					if (posToBlockIndex.containsKey(attachedPos.relative(dir))) {
 						attachedToShip = true;
 						break;
 					}
@@ -263,12 +262,11 @@ public class ShipDocking {
 				int worldDeltaY = attachedPos.getY() - (int) Math.floor(helmY);
 				int worldDeltaZ = attachedPos.getZ() - (int) Math.floor(helmZ);
 				var localPos = ShipBlockUtils.worldToRelative(worldDeltaX, worldDeltaY, worldDeltaZ, cos, sin);
-				Direction localFacing = inverseRotation.rotate(attachedEntity.getHorizontalFacing());
+				Direction localFacing = inverseRotation.rotate(attachedEntity.getDirection());
 
-				NbtWriteView writeView = NbtWriteView.create(
-					ErrorReporter.EMPTY, world.getRegistryManager());
-				attachedEntity.saveData(writeView);
-				NbtCompound nbt = writeView.getNbt();
+				TagValueOutput writeView = ShipBlockNbtUtil.newOutput(world);
+				attachedEntity.save(writeView);
+				CompoundTag nbt = writeView.buildResult();
 				capturedDecorations.add(new ShipDecoration(localPos, localFacing, nbt));
 				attachedEntity.discard();
 			}
@@ -291,7 +289,7 @@ public class ShipDocking {
 
 	// --- Salvage helpers ---
 
-	private void salvageObstructedBlock(ServerWorld world, ShipBlock block, BlockPos worldPos) {
+	private void salvageObstructedBlock(ServerLevel world, ShipBlock block, BlockPos worldPos) {
 		Item blockItem = block.blockState().getBlock().asItem();
 		if (blockItem != null && blockItem != Items.AIR) {
 			ItemStack stack = new ItemStack(blockItem);
@@ -300,38 +298,37 @@ public class ShipDocking {
 					salvageBlockEntityContents(world, block.blockEntityData().get(), worldPos);
 				}
 			}
-			world.spawnEntity(new ItemEntity(world,
+			world.addFreshEntity(new ItemEntity(world,
 				worldPos.getX() + 0.5, worldPos.getY() + 1, worldPos.getZ() + 0.5, stack));
 		} else if (block.hasBlockEntityData()) {
 			salvageBlockEntityContents(world, block.blockEntityData().get(), worldPos);
 		}
 	}
 
-	private boolean applyBlockEntityToStack(ItemStack stack, NbtCompound nbt) {
-		return nbt.getString("id").map(idStr -> {
-			var beType = Registries.BLOCK_ENTITY_TYPE.get(Identifier.of(idStr));
-			if (beType != null) {
-				NbtCompound dataNbt = nbt.copy();
-				dataNbt.remove("id");
-				dataNbt.remove("x");
-				dataNbt.remove("y");
-				dataNbt.remove("z");
-				stack.set(DataComponentTypes.BLOCK_ENTITY_DATA,
-					net.minecraft.entity.TypedEntityData.create(beType, dataNbt));
-				return true;
-			}
-			return false;
-		}).orElse(false);
+	private boolean applyBlockEntityToStack(ItemStack stack, CompoundTag nbt) {
+		return nbt.getString("id").map(idStr ->
+			BuiltInRegistries.BLOCK_ENTITY_TYPE.get(Identifier.parse(idStr))
+				.map(beTypeRef -> {
+					CompoundTag dataNbt = nbt.copy();
+					dataNbt.remove("id");
+					dataNbt.remove("x");
+					dataNbt.remove("y");
+					dataNbt.remove("z");
+					stack.set(DataComponents.BLOCK_ENTITY_DATA,
+						TypedEntityData.of(beTypeRef.value(), dataNbt));
+					return true;
+				}).orElse(false)
+		).orElse(false);
 	}
 
-	private void salvageBlockEntityContents(ServerWorld world, NbtCompound nbt, BlockPos worldPos) {
+	private void salvageBlockEntityContents(ServerLevel world, CompoundTag nbt, BlockPos worldPos) {
 		nbt.getList("Items").ifPresent(itemsNbt -> {
 			for (int j = 0; j < itemsNbt.size(); j++) {
 				itemsNbt.getCompound(j).ifPresent(itemNbt -> {
-					ItemStack.CODEC.parse(world.getRegistryManager().getOps(net.minecraft.nbt.NbtOps.INSTANCE), itemNbt)
+					ItemStack.CODEC.parse(world.registryAccess().createSerializationContext(NbtOps.INSTANCE), itemNbt)
 						.result().ifPresent(stack -> {
 							if (!stack.isEmpty()) {
-								world.spawnEntity(new ItemEntity(world,
+								world.addFreshEntity(new ItemEntity(world,
 									worldPos.getX() + 0.5, worldPos.getY() + 1, worldPos.getZ() + 0.5, stack));
 							}
 						});

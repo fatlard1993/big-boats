@@ -1,14 +1,15 @@
 package justfatlard.big_boats.ship;
 
+import justfatlard.big_boats.mixin.InteractionAccessor;
 import justfatlard.big_boats.util.RelativeBlockPos;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.decoration.InteractionEntity;
-import net.minecraft.entity.effect.StatusEffectInstance;
-import net.minecraft.entity.effect.StatusEffects;
-import net.minecraft.entity.mob.ShulkerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.Interaction;
+import net.minecraft.world.entity.monster.Shulker;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -27,7 +28,7 @@ import org.slf4j.LoggerFactory;
  * Manages collision shulker entities and the helm interaction entity for a ship.
  *
  * <p>Each hull block gets an invisible shulker for server-side collision. The helm gets an
- * {@link InteractionEntity} for mount clicks. Interior blocks are skipped to conserve the
+ * {@link Interaction} entity for mount clicks. Interior blocks are skipped to conserve the
  * server entity budget. Shulker positions update via tick-spreading (threshold + interval).</p>
  *
  * <p>UUID tracking enables crash recovery: on load, orphaned entities from a previous session
@@ -36,14 +37,12 @@ import org.slf4j.LoggerFactory;
 public class ShipCollisionEntities {
 	private static final Logger LOGGER = LoggerFactory.getLogger(ShipCollisionEntities.class);
 
-	// Collision entities - keyed by relative position to avoid index coupling
-	private final Map<RelativeBlockPos, ShulkerEntity> collisionShulkers = new HashMap<>();
+	// Keyed by relative position to avoid index coupling
+	private final Map<RelativeBlockPos, Shulker> collisionShulkers = new HashMap<>();
 	private final Set<UUID> collisionShulkerUUIDs = new HashSet<>();
 
-	// Helm interaction entity for mounting
-	private InteractionEntity helmInteraction;
+	private Interaction helmInteraction;
 
-	// Track UUIDs of child entities for cleanup on load (handles crash recovery)
 	private final List<UUID> trackedChildEntityUUIDs = new ArrayList<>();
 
 	// Tick-spreading: collision shulker updates
@@ -54,12 +53,10 @@ public class ShipCollisionEntities {
 
 	/**
 	 * Spawns collision shulkers for hull blocks and a helm interaction entity.
-	 * Only hull blocks (exterior) get shulkers — interior blocks can never collide
+	 * Only hull blocks (exterior) get shulkers; interior blocks can never collide
 	 * with the world and would waste the server entity budget.
-	 *
-	 * @param hullPositions The set of RelativeBlockPos on the ship's exterior hull
 	 */
-	public void spawnAll(ServerWorld world, List<ShipBlock> blocks, ShipPose pose,
+	public void spawnAll(ServerLevel world, List<ShipBlock> blocks, ShipPose pose,
 						 Collection<RelativeBlockPos> hullPositions) {
 		trackedChildEntityUUIDs.clear();
 		int skipped = 0;
@@ -86,62 +83,59 @@ public class ShipCollisionEntities {
 	}
 
 	/**
-	 * Spawns a single invisible shulker at the given block's position.
-	 * The shulker provides server-side collision for the virtual ship block.
+	 * Spawns the invisible shulker providing server-side collision for one virtual ship block.
 	 */
-	private void spawnShulkerForBlock(ServerWorld world, ShipBlock block, ShipPose pose) {
-		ShulkerEntity shulker = new ShulkerEntity(EntityType.SHULKER, world);
+	private void spawnShulkerForBlock(ServerLevel world, ShipBlock block, ShipPose pose) {
+		Shulker shulker = new Shulker(EntityTypes.SHULKER, world);
 
 		// Position at block center so the shulker's 1x1 hitbox covers the full visual block.
 		// toWorld gives the block corner; +0.5 on X/Z centers the shulker.
-		Vec3d worldPos = pose.toWorld(block.relativePos());
-		shulker.setPosition(worldPos.x + 0.5, worldPos.y, worldPos.z + 0.5);
+		Vec3 worldPos = pose.toWorld(block.relativePos());
+		shulker.setPos(worldPos.x + 0.5, worldPos.y, worldPos.z + 0.5);
 
-		shulker.addStatusEffect(new StatusEffectInstance(
-			StatusEffects.INVISIBILITY, Integer.MAX_VALUE, 0, false, false, false
+		shulker.addEffect(new MobEffectInstance(
+			MobEffects.INVISIBILITY, Integer.MAX_VALUE, 0, false, false, false
 		));
 
-		shulker.setAiDisabled(true);
+		shulker.setNoAi(true);
 		shulker.setNoGravity(true);
 		shulker.setSilent(true);
-		shulker.setInvulnerable(true);
+		shulker.setPermanentlyInvulnerable(true);
 
-		world.spawnEntity(shulker);
+		world.addFreshEntity(shulker);
 		collisionShulkers.put(block.relativePos(), shulker);
-		collisionShulkerUUIDs.add(shulker.getUuid());
-		trackedChildEntityUUIDs.add(shulker.getUuid());
+		collisionShulkerUUIDs.add(shulker.getUUID());
+		trackedChildEntityUUIDs.add(shulker.getUUID());
 	}
 
-	private void spawnHelmInteraction(ServerWorld world, ShipPose pose) {
-		InteractionEntity interaction = new InteractionEntity(EntityType.INTERACTION, world);
-		Vec3d center = pose.helmCenter();
-		interaction.setPosition(center.x, center.y, center.z);
-		interaction.setInteractionWidth(1.0f);
-		interaction.setInteractionHeight(2.0f);
-		interaction.setResponse(true);
-		world.spawnEntity(interaction);
-		// Assign AFTER successful spawn — if spawnEntity throws, helmInteraction stays null
+	private void spawnHelmInteraction(ServerLevel world, ShipPose pose) {
+		Interaction interaction = new Interaction(EntityTypes.INTERACTION, world);
+		Vec3 center = pose.helmCenter();
+		interaction.setPos(center.x, center.y, center.z);
+		InteractionAccessor accessor = (InteractionAccessor) interaction;
+		accessor.invokeSetWidth(1.0f);
+		accessor.invokeSetHeight(2.0f);
+		accessor.invokeSetResponse(true);
+		world.addFreshEntity(interaction);
+		// Assign AFTER successful spawn: if addFreshEntity throws, helmInteraction stays null
 		// rather than pointing to an entity that doesn't exist in the world.
 		helmInteraction = interaction;
-		trackedChildEntityUUIDs.add(interaction.getUuid());
+		trackedChildEntityUUIDs.add(interaction.getUUID());
 	}
 
-	/**
-	 * Updates collision shulker positions based on current ship pose.
-	 */
 	public void updatePositions(ShipPose pose) {
 		for (var entry : collisionShulkers.entrySet()) {
-			ShulkerEntity shulker = entry.getValue();
+			Shulker shulker = entry.getValue();
 			if (shulker.isRemoved()) continue;
 
 			// toWorld gives block corner; +0.5 on X/Z centers the shulker
-			Vec3d worldPos = pose.toWorld(entry.getKey());
-			shulker.setPosition(worldPos.x + 0.5, worldPos.y, worldPos.z + 0.5);
+			Vec3 worldPos = pose.toWorld(entry.getKey());
+			shulker.setPos(worldPos.x + 0.5, worldPos.y, worldPos.z + 0.5);
 		}
 
 		if (helmInteraction != null && !helmInteraction.isRemoved()) {
-			Vec3d center = pose.helmCenter();
-			helmInteraction.setPosition(center.x, center.y, center.z);
+			Vec3 center = pose.helmCenter();
+			helmInteraction.setPos(center.x, center.y, center.z);
 		}
 	}
 
@@ -189,7 +183,7 @@ public class ShipCollisionEntities {
 			var entry = iter.next();
 			if (!survivingPositions.contains(entry.getKey())) {
 				if (!entry.getValue().isRemoved()) entry.getValue().discard();
-				collisionShulkerUUIDs.remove(entry.getValue().getUuid());
+				collisionShulkerUUIDs.remove(entry.getValue().getUUID());
 				iter.remove();
 			}
 		}
@@ -200,14 +194,14 @@ public class ShipCollisionEntities {
 	 * Call when docking (real blocks take over collision) or on entity removal.
 	 */
 	public void discardAll() {
-		for (ShulkerEntity shulker : collisionShulkers.values()) {
+		for (Shulker shulker : collisionShulkers.values()) {
 			try {
 				if (!shulker.isRemoved()) {
 					shulker.discard();
 				}
 			} catch (RuntimeException e) {
 				// Per-entity catch: one shulker failing to discard shouldn't leave others alive
-				LOGGER.warn("Failed to discard collision shulker {}", shulker.getUuid(), e);
+				LOGGER.warn("Failed to discard collision shulker {}", shulker.getUUID(), e);
 			}
 		}
 		collisionShulkers.clear();
@@ -228,7 +222,7 @@ public class ShipCollisionEntities {
 	/**
 	 * Cleans up orphaned entities from a previous session (crash recovery).
 	 */
-	public void cleanupOrphanedEntities(ServerWorld world, List<UUID> oldUUIDs) {
+	public void cleanupOrphanedEntities(ServerLevel world, List<UUID> oldUUIDs) {
 		if (oldUUIDs.isEmpty()) return;
 
 		for (UUID uuid : oldUUIDs) {
@@ -244,14 +238,14 @@ public class ShipCollisionEntities {
 	}
 
 	public boolean isCollisionShulker(Entity entity) {
-		return collisionShulkerUUIDs.contains(entity.getUuid());
+		return collisionShulkerUUIDs.contains(entity.getUUID());
 	}
 
 	public List<UUID> getTrackedChildEntityUUIDs() {
 		return List.copyOf(trackedChildEntityUUIDs);
 	}
 
-	public Map<RelativeBlockPos, ShulkerEntity> getCollisionShulkers() {
+	public Map<RelativeBlockPos, Shulker> getCollisionShulkers() {
 		return Collections.unmodifiableMap(collisionShulkers);
 	}
 }

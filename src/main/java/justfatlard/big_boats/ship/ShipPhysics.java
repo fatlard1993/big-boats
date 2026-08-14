@@ -1,11 +1,10 @@
 package justfatlard.big_boats.ship;
 
 import justfatlard.big_boats.util.ShipBlockUtils;
-import net.minecraft.util.math.Direction;
+import net.minecraft.core.Direction;
 
 /**
- * Handles ship velocity and physics calculations.
- * Owns velocity state and provides physics operations.
+ * Owns ship velocity state and physics operations.
  */
 public class ShipPhysics {
 	private double velocityX = 0;
@@ -43,8 +42,7 @@ public class ShipPhysics {
 	}
 
 	/**
-	 * Stops the ship completely if moving very slowly.
-	 * Prevents endless tiny drifting.
+	 * Stops the ship completely when moving very slowly; prevents endless tiny drifting.
 	 */
 	public void stopIfSlow() {
 		if (getSpeed() < 0.001) {
@@ -53,9 +51,6 @@ public class ShipPhysics {
 		}
 	}
 
-	/**
-	 * Resets velocity to zero (e.g., when docking).
-	 */
 	public void reset() {
 		velocityX = 0;
 		velocityZ = 0;

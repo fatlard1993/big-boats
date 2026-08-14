@@ -1,8 +1,8 @@
-# Big Boats — Vision
+# Big Boats: Vision
 
 ## What It Is
 
-A server-side Fabric mod that lets players build ships out of any blocks and sail them. The vanilla Minecraft promise — build anything — extended to the water. You build a dock and a ship because that's what people do. Big Boats makes the ship actually work.
+A server-side Fabric mod that lets players build ships out of any blocks and sail them. The vanilla Minecraft promise, build anything, extended to the water. You build a dock and a ship because that's what people do. Big Boats makes the ship actually work.
 
 ## Destination
 
@@ -10,7 +10,7 @@ Any player-built structure becomes a sailable ship with no block or inventory lo
 
 This is not a naval warfare mod. Not a tech mod. Not a framework. It's the simplest possible answer to "I built a ship, why can't I sail it?"
 
-The core features are built, including ship-to-ship collision. The mod is in hardening — tightening the no-loss contract, multiplayer testing, and closing edge cases that solo testing doesn't find.
+The core features are built, including ship-to-ship collision. The mod is in hardening: tightening the no-loss contract, multiplayer testing, and closing edge cases that solo testing doesn't find.
 
 ## Who It's For
 
@@ -18,11 +18,11 @@ Players who build ships and want to use them. Throw the bottle, sail the ship.
 
 ## Principles
 
-1. **Vanilla feel.** If Mojang added ships, they'd work like this. No HUD. No special crafting tables. WASD and shift. The christening bottle is the only new concept, and it's a throwable potion — players already know the gesture.
+1. **Vanilla feel.** If Mojang added ships, they'd work like this. No HUD. No special crafting tables. WASD and shift. The christening bottle is the only new concept, and it's a throwable potion, and players already know the gesture.
 
-2. **No loss.** Blocks, inventories, decorations, block entities — everything survives the full lifecycle. Dock, undock, sail, crash the server, restart, dock again. Nothing missing. This is the core contract and the hardest problem.
+2. **No loss.** Blocks, inventories, decorations, block entities: everything survives the full lifecycle. Dock, undock, sail, crash the server, restart, dock again. Nothing missing. This is the core contract and the hardest problem.
 
-3. **Server-side only.** Polymer stays the delivery mechanism. The optional client mod improves camera — it never gates functionality. If a feature can't be done server-side, find another way or don't do it.
+3. **Server-side authoritative.** Pandorical is the delivery mechanism for rendering and camera control, both pushed from the server. Pandorical is a required client-side dependency, not an optional add-on; there is no vanilla-client path.
 
 4. **Performance is a feature.** Hull-only collision, tick-spreading, deduplication. The mod should run on a modest server with multiple active ships without degrading tick rate. The 2,000 block limit exists for this reason and will rise only when measurements justify it.
 
@@ -47,18 +47,18 @@ Players who build ships and want to use them. Throw the bottle, sail the ship.
 
 The ship entity delegates behavior to focused components, all receiving a {@link ShipPose} to transform coordinates:
 
-- **ShipPhysics** — velocity, acceleration, drag. Stateful (owns velocity).
-- **ShipCollision** — hull block computation and world collision checks. Stateful (owns hull set).
-- **ShipCollisionEntities** — invisible shulker lifecycle for server-side collision, plus helm interaction entity. Stateful.
-- **ShipLighting** — light-emitting block detection and invisible light block placement/movement. Stateful.
-- **ShipElementHolder** — virtual display entities for rendering ship blocks to clients via Polymer.
-- **ShipInteraction** — stateless helper for player interaction with doors/trapdoors/fence gates on moving ships.
-- **ShipDecoration** — record capturing item frames and paintings attached to the ship, serialized during undock, restored on dock.
-- **ShipDocking** — world mutations for dock/undock: block placement/removal, decoration capture/restore, block entity salvaging.
-- **ShipConfig** — central tuning constants with documented rationale. All values static; no runtime config.
-- **ShipPose** — immutable record bundling helm position + rotation. Passed to every delegate.
-- **ShipBlockUtils** — shared rotation math, breakability checks, cached seat offsets.
-- **ShipBlock** — record for a single block: relative position, state, optional block entity NBT.
+- **ShipPhysics**: velocity, acceleration, drag. Stateful (owns velocity).
+- **ShipCollision**: hull block computation and world collision checks. Stateful (owns hull set).
+- **ShipCollisionEntities**: invisible shulker lifecycle for server-side collision, plus helm interaction entity. Stateful.
+- **ShipLighting**: light-emitting block detection and invisible light block placement/movement. Stateful.
+- **ShipStructure**: thin wrapper around Pandorical's structure API for rendering ship blocks to Pandorical clients as a single batch-rendered structure.
+- **ShipInteraction**: stateless helper for player interaction with doors/trapdoors/fence gates on moving ships.
+- **ShipDecoration**: record capturing item frames and paintings attached to the ship, serialized during undock, restored on dock.
+- **ShipDocking**: world mutations for dock/undock: block placement/removal, decoration capture/restore, block entity salvaging.
+- **ShipConfig**: central tuning constants with documented rationale. All values static; no runtime config.
+- **ShipPose**: immutable record bundling helm position + rotation. Passed to every delegate.
+- **ShipBlockUtils**: shared rotation math, breakability checks, cached seat offsets.
+- **ShipBlock**: record for a single block: relative position, state, optional block entity NBT.
 
 MultiBlockShipEntity (~1200 lines) owns the state machine, tick loop, and delegate coordination. ShipDocking (~360 lines) handles world mutations: block placement/removal, decoration capture/restore, and salvaging obstructed blocks.
 
@@ -66,10 +66,10 @@ MultiBlockShipEntity (~1200 lines) owns the state machine, tick loop, and delega
 
 Ranked by impact:
 
-1. **Multiplayer testing.** The mod has been developed single-player. Passengers standing on the structure, multiple ships in the same area, concurrent mount/dismount, chunk loading boundaries with multiple players — all untested. Risk of silent breakage.
+1. **Multiplayer testing.** The mod has been developed single-player. Passengers standing on the structure, multiple ships in the same area, concurrent mount/dismount, chunk loading boundaries with multiple players: all untested. Risk of silent breakage.
 
 2. **Hardening the no-loss contract.** Block list mutations are now structurally immutable (List.copyOf). Remaining: transition state handling during entity removal, edge cases in the dock/undock cycle. Every block loss is a bug.
 
 3. **Architecture cleanup.** Dock/undock world mutations are extracted into ShipDocking. Remaining: serialization could move to a codec helper.
 
-4. **Performance measurement.** The hull optimization and tick-spreading are in place but not benchmarked. Ship-to-ship collision queries are O(n*m) per tick per ship and uncached — need profiling under load with multiple active ships. Need actual numbers before raising the block limit or claiming server-friendly.
+4. **Performance measurement.** The hull optimization and tick-spreading are in place but not benchmarked. Ship-to-ship collision queries are O(n*m) per tick per ship and uncached; need profiling under load with multiple active ships. Need actual numbers before raising the block limit or claiming server-friendly.

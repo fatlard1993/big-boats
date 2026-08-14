@@ -2,11 +2,11 @@ package justfatlard.big_boats.ship;
 
 import justfatlard.big_boats.util.RelativeBlockPos;
 import justfatlard.big_boats.util.ShipBlockUtils;
-import net.minecraft.block.BlockState;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -30,7 +30,7 @@ public class ShipCollision {
 	// 0.49 instead of 0.5 to avoid sampling exactly on block boundaries where
 	// floating-point edge cases cause false positives from adjacent blocks.
 	// Two offsets per axis (2x2x2 = 8 samples) catches all block positions a
-	// hull block can overlap. The center (0) is redundant — corner samples always
+	// hull block can overlap. The center (0) is redundant; corner samples always
 	// cover the center block position.
 	private static final double[] SAMPLE_OFFSETS = {-0.49, 0.49};
 
@@ -79,7 +79,7 @@ public class ShipCollision {
 		Set<BlockPos> positions = new HashSet<>();
 
 		for (RelativeBlockPos hullPos : hullBlocks) {
-			Vec3d worldPos = pose.toWorld(hullPos);
+			Vec3 worldPos = pose.toWorld(hullPos);
 
 			for (double ox : SAMPLE_OFFSETS) {
 				for (double oy : SAMPLE_OFFSETS) {
@@ -97,17 +97,12 @@ public class ShipCollision {
 	}
 
 	/**
-	 * Checks if moving the ship would collide with world terrain, breaking fragile blocks in the path.
-	 * Fragile blocks (plants, kelp, cobwebs, etc.) are broken and dropped instead of blocking movement.
+	 * Checks if moving the ship would collide with world terrain. Fragile blocks
+	 * (plants, kelp, cobwebs, etc.) are broken and dropped instead of blocking movement.
 	 *
-	 * @param world The world to check collisions in
-	 * @param pose Current ship pose
-	 * @param deltaX Movement delta in X
-	 * @param deltaY Movement delta in Y
-	 * @param deltaZ Movement delta in Z
 	 * @return true if collision detected (movement blocked), false if path is clear
 	 */
-	public boolean checkCollisionAndBreakFragile(World world, ShipPose pose,
+	public boolean checkCollisionAndBreakFragile(Level world, ShipPose pose,
 							  double deltaX, double deltaY, double deltaZ) {
 		ShipPose movedPose = new ShipPose(
 			pose.helmX() + deltaX, pose.helmY() + deltaY,
@@ -116,18 +111,18 @@ public class ShipCollision {
 		Set<BlockPos> positionsToCheck = gatherCollisionPositions(movedPose);
 
 		for (BlockPos pos : positionsToCheck) {
-			if (!world.isChunkLoaded(pos)) {
+			if (!world.isLoaded(pos)) {
 				return true;
 			}
 
 			BlockState worldBlock = world.getBlockState(pos);
 
-			if (worldBlock.isAir() || worldBlock.isLiquid()) {
+			if (worldBlock.isAir() || worldBlock.liquid()) {
 				continue;
 			}
 
-			if (ShipBlockUtils.isBreakableByShip(worldBlock) && world instanceof ServerWorld serverWorld) {
-				serverWorld.breakBlock(pos, true);
+			if (ShipBlockUtils.isBreakableByShip(worldBlock) && world instanceof ServerLevel) {
+				world.destroyBlock(pos, true, null, 512);
 				continue;
 			}
 
@@ -138,23 +133,22 @@ public class ShipCollision {
 
 	/**
 	 * Checks if the ship at a given rotation would collide with world terrain.
-	 * Unlike movement collision, rotation does NOT break blocks - just prevents rotation.
+	 * Unlike movement collision, rotation does NOT break fragile blocks; the
+	 * rotation is prevented instead.
 	 *
-	 * @param world The world to check collisions in
-	 * @param pose Ship pose with the proposed rotation
 	 * @return true if collision detected, false if rotation is clear
 	 */
-	public boolean checkCollisionAtRotation(World world, ShipPose pose) {
+	public boolean checkCollisionAtRotation(Level world, ShipPose pose) {
 		Set<BlockPos> positionsToCheck = gatherCollisionPositions(pose);
 
 		for (BlockPos pos : positionsToCheck) {
-			if (!world.isChunkLoaded(pos)) {
+			if (!world.isLoaded(pos)) {
 				return true;
 			}
 
 			BlockState worldBlock = world.getBlockState(pos);
 
-			if (worldBlock.isAir() || worldBlock.isLiquid() || ShipBlockUtils.isBreakableByShip(worldBlock)) {
+			if (worldBlock.isAir() || worldBlock.liquid() || ShipBlockUtils.isBreakableByShip(worldBlock)) {
 				continue;
 			}
 
@@ -172,11 +166,10 @@ public class ShipCollision {
 	}
 
 	/**
-	 * Checks if the ship at the proposed pose overlaps with positions occupied
-	 * by other ships. Same principle as terrain collision — if any hull sample
-	 * position falls inside another ship's hull, movement is blocked.
+	 * Checks if the ship at the proposed pose overlaps positions occupied by
+	 * other ships: if any hull sample position falls inside another ship's
+	 * hull, movement is blocked.
 	 *
-	 * @param movedPose The proposed ship pose after movement/rotation
 	 * @param otherShipPositions Combined hull positions of all nearby ships
 	 * @return true if collision detected (movement blocked)
 	 */

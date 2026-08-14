@@ -7,3 +7,6 @@ pluginManagement {
 		gradlePluginPortal()
 	}
 }
+
+include ':pandorical'
+project(':pandorical').projectDir = new File(rootProject.projectDir, '../pandorical')

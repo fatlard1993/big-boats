@@ -4,7 +4,7 @@ package justfatlard.big_boats.detection;
  * Result of grounding detection. A ship can only undock when FreeFloating or TouchingTerrain.
  *
  * Variants:
- * - FreeFloating: No adjacent solid blocks — ship is in open water.
+ * - FreeFloating: No adjacent solid blocks; ship is in open water.
  * - TouchingTerrain: Adjacent blocks found but small enough that the ship can still undock.
  *   Connected blocks may be absorbed during the undock rescan if still attached.
  * - GroundedTooLarge: Connected landmass exceeds the ship's remaining block capacity.
