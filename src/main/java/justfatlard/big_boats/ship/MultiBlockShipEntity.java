@@ -19,7 +19,6 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.item.ItemStack;
@@ -541,6 +540,13 @@ public class MultiBlockShipEntity extends Entity {
 	 * can cause inconsistent passenger state.
 	 */
 	public boolean tryMount(ServerPlayer player) {
+		if (this.hasPassenger(player)) {
+			// Helm click while piloting stops driving: stopRiding -> removePassenger
+			// handles the dock and camera reset, same as the sneak dismount
+			player.stopRiding();
+			return true;
+		}
+
 		if (!this.getPassengers().isEmpty()) {
 			player.sendSystemMessage(
 				Component.translatable("big-boats.ship.occupied").withStyle(ChatFormatting.YELLOW), true);
@@ -757,10 +763,13 @@ public class MultiBlockShipEntity extends Entity {
 			}
 		}
 
-		// Move entity to passenger seat position
+		// Anchor the entity at the passenger seat with setPos, never move(): swept collision
+		// against terrain or this ship's own collision shulkers can block move() and strand
+		// the anchor (and the mounted pilot, positioned via positionRider) behind the
+		// rendered deck. Hull collision already gated helmX/helmZ/newY above.
 		Vec3 seatWorld = computeSeatWorldPos();
 		this.setDeltaMovement(seatWorld.x - this.getX(), newY - this.getY(), seatWorld.z - this.getZ());
-		this.move(MoverType.SELF, this.getDeltaMovement());
+		this.setPos(seatWorld.x, newY, seatWorld.z);
 
 		// Sync structure pose: pushed every tick while sailing (Pandorical's client-side
 		// interpolation expects a steady stream; see StructureManager's docs).
