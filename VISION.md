@@ -45,7 +45,7 @@ Players who build ships and want to use them. Throw the bottle, sail the ship.
 
 ## Architecture
 
-The ship entity delegates behavior to focused components, all receiving a {@link ShipPose} to transform coordinates:
+The ship entity delegates behavior to focused components, all receiving a `ShipPose` to transform coordinates:
 
 - **ShipPhysics**: velocity, acceleration, drag. Stateful (owns velocity).
 - **ShipCollision**: hull block computation and world collision checks. Stateful (owns hull set).
@@ -60,7 +60,7 @@ The ship entity delegates behavior to focused components, all receiving a {@link
 - **ShipBlockUtils**: shared rotation math, breakability checks, cached seat offsets.
 - **ShipBlock**: record for a single block: relative position, state, optional block entity NBT.
 
-MultiBlockShipEntity (~1200 lines) owns the state machine, tick loop, and delegate coordination. ShipDocking (~360 lines) handles world mutations: block placement/removal, decoration capture/restore, and salvaging obstructed blocks.
+MultiBlockShipEntity owns the state machine, tick loop, and delegate coordination.
 
 ## What's Left
 
@@ -68,8 +68,8 @@ Ranked by impact:
 
 1. **Multiplayer testing.** The mod has been developed single-player. Passengers standing on the structure, multiple ships in the same area, concurrent mount/dismount, chunk loading boundaries with multiple players: all untested. Risk of silent breakage.
 
-2. **Hardening the no-loss contract.** Block list mutations are now structurally immutable (List.copyOf). Remaining: transition state handling during entity removal, edge cases in the dock/undock cycle. Every block loss is a bug.
+2. **Hardening the no-loss contract.** Transition state handling during entity removal, and edge cases in the dock/undock cycle. Every block loss is a bug.
 
-3. **Architecture cleanup.** Dock/undock world mutations are extracted into ShipDocking. Remaining: serialization could move to a codec helper.
+3. **Architecture cleanup.** Serialization could move to a codec helper.
 
 4. **Performance measurement.** The hull optimization and tick-spreading are in place but not benchmarked. Ship-to-ship collision queries are O(n*m) per tick per ship and uncached; need profiling under load with multiple active ships. Need actual numbers before raising the block limit or claiming server-friendly.

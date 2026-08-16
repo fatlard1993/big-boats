@@ -2,8 +2,6 @@
 
 A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any structure, add a helm, christen it, and sail away.
 
-Requires the **Pandorical** mod client-side. Ships are plain server-side entities with no vanilla-client disguise: their blocks are rendered to Pandorical clients as a single batch-rendered structure (via Pandorical's `structures()` API), and camera pull-back/third-person perspective while piloting is pushed automatically through Pandorical's camera API. There is no vanilla-client compatibility and no separate optional client mod; Pandorical is required to see or pilot a ship at all.
-
 ## Features
 
 ### Ship Building
@@ -77,20 +75,18 @@ S = Stick, I = Iron Ingot, P = Any Planks
 - Hull-only collision optimization skips interior blocks
 - Crash recovery: ships sailing when the server stops are force-docked on restart with all blocks restored
 
-## Requirements
-
-Targets the Minecraft, Fabric Loader, Fabric API, and Java versions declared in this mod's `gradle.properties`; check there for the exact currently-supported version.
-
 ## Pandorical
 
-Two things route through it:
+Big Boats runs server-side, and Pandorical is a hard dependency (`fabric.mod.json`): the server will not load this mod without it. Two things route through it:
 
-- **Ship rendering**: a ship's blocks are rendered as a single batch-rendered Pandorical structure, posed and moved each tick to follow the ship's position and rotation. The ship entity itself is registered with Pandorical's `"invisible"` renderer and draws nothing on its own; only the structure is visible.
-- **Piloting camera**: camera pull-back distance and third-person-back perspective while piloting are pushed directly to the player via Pandorical's camera API on mount/dismount.
+- **Ship rendering**: a ship's blocks are drawn as a single batch-rendered Pandorical structure, posed and moved each tick to follow the ship. The ship entity itself uses Pandorical's `"invisible"` renderer and draws nothing; only the structure is visible.
+- **Piloting camera**: pull-back distance and third-person-back perspective are pushed to the player through Pandorical's camera API on mount and dismount.
+
+Clients are not the optional half here. A ship is invisible without Pandorical, so a vanilla client cannot see or pilot one at all.
 
 ## Installation
 
-Install alongside its declared dependencies (see `fabric.mod.json`), including Pandorical client-side.
+Install server-side alongside its declared dependencies (see `fabric.mod.json`); connecting clients need only Pandorical. Version targets live in `gradle.properties` (Minecraft, loader, Fabric API) and `fabric.mod.json` (Java).
 
 ## Download
 
@@ -127,4 +123,4 @@ Report bugs and request features on [GitHub Issues](https://github.com/justfatla
 
 ## License
 
-MIT License; see the LICENSE file for details.
+MIT, see [LICENSE](LICENSE).
