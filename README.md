@@ -98,7 +98,10 @@ Get the latest release from [GitHub Releases](https://github.com/justfatlard/big
 
 ## Building from Source
 
+Big Boats builds against Pandorical's live source, not a published artifact: `settings.gradle` includes `../pandorical`. Clone both side by side or the build fails before it starts.
+
 ```bash
+git clone https://github.com/justfatlard/pandorical.git
 git clone https://github.com/justfatlard/big-boats.git
 cd big-boats
 ./gradlew build
