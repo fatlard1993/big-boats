@@ -35,6 +35,18 @@ A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any
 - **Occupied check**: Only one pilot at a time
 - **Structure damage detection**: Can't undock if the ship structure is broken
 
+## Learning It
+
+Multiblock ships have no entry in any recipe book, no ore to find, and nothing in the world that hints they are possible. The first hull anyone builds is the one somebody told them they could build.
+
+So with [village-quests](https://github.com/justfatlard/village-quests) installed, a fisherman who trusts you (50 reputation) will sell you the makings: 32 planks, a helm and a christening bottle for 24 emeralds, and the two recipes to go with them.
+
+The bottle is the real gift. It is a heart of the sea and a glass bottle, and a heart of the sea is otherwise a trophy that sits in a chest for the length of a world.
+
+This is a shop rather than a quest, because nothing here needs doing. The kit is deliberately not a ship: enough to make the idea concrete, nowhere near enough to skip the building.
+
+Optional and guarded: without village-quests the mod behaves exactly as before.
+
 ## Items
 
 ### Christening Bottle

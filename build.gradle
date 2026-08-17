@@ -15,6 +15,11 @@ repositories {
 }
 
 dependencies {
+	// Optional: village-quests integration (compile-only, not bundled at runtime)
+	if (file("../village-quests/build/libs/village-quests-1.0.0.jar").exists()) {
+		compileOnly files("../village-quests/build/libs/village-quests-1.0.0.jar")
+	}
+
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"

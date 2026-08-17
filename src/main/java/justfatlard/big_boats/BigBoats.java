@@ -102,6 +102,11 @@ public class BigBoats implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		// Guarded class load: BoatKitDialogue names village-quests types.
+		if (net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("village-quests-justfatlard")) {
+			justfatlard.big_boats.integration.BoatKitDialogue.register();
+		}
+
 		if (PandoricalApi.isAvailable()) {
 			PandoricalApi.content().registerBlock(MOD_ID + ":helm", new BlockRegistration()
 				.baseBlock("minecraft:oak_planks")
