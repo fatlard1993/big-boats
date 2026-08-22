@@ -110,6 +110,7 @@ public class BigBoats implements ModInitializer {
 		if (PandoricalApi.isAvailable()) {
 			PandoricalApi.content().registerBlock(MOD_ID + ":helm", new BlockRegistration()
 				.baseBlock("minecraft:oak_planks")
+				.interactive()
 				.model(MOD_ID + ":block/helm"));
 			PandoricalApi.content().registerItem(MOD_ID + ":helm", new ItemRegistration()
 				.model(MOD_ID + ":item/helm"));
