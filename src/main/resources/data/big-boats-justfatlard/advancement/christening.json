@@ -1,0 +1,24 @@
+{
+  "display": {
+    "icon": {
+      "id": "big-boats-justfatlard:christening_bottle"
+    },
+    "title": "I Name This Ship",
+    "description": "Come by a bottle worth breaking on a hull",
+    "show_toast": true,
+    "announce_to_chat": true
+  },
+  "criteria": {
+    "bottle": {
+      "trigger": "minecraft:inventory_changed",
+      "conditions": {
+        "items": [
+          {
+            "items": "big-boats-justfatlard:christening_bottle"
+          }
+        ]
+      }
+    }
+  },
+  "parent": "minecraft:adventure/root"
+}
