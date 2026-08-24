@@ -39,7 +39,7 @@ A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any
 
 Multiblock ships have no entry in any recipe book, no ore to find, and nothing in the world that hints they are possible. The first hull anyone builds is the one somebody told them they could build.
 
-So with [village-quests](https://github.com/justfatlard/village-quests) installed, a fisherman who trusts you (50 reputation) will sell you the makings: 32 planks, a helm and a christening bottle for 24 emeralds, and the two recipes to go with them.
+So with [village-quests](https://github.com/fatlard1993/village-quests) installed, a fisherman who trusts you (50 reputation) will sell you the makings: 32 planks, a helm and a christening bottle for 24 emeralds, and the two recipes to go with them.
 
 The bottle is the real gift. It is a heart of the sea and a glass bottle, and a heart of the sea is otherwise a trophy that sits in a chest for the length of a world.
 
@@ -102,15 +102,15 @@ Install server-side alongside its declared dependencies (see `fabric.mod.json`);
 
 ## Download
 
-Get the latest release from [GitHub Releases](https://github.com/justfatlard/big-boats/releases).
+Get the latest release from [GitHub Releases](https://github.com/fatlard1993/big-boats/releases).
 
 ## Building from Source
 
 Big Boats builds against Pandorical's live source, not a published artifact: `settings.gradle` includes `../pandorical`. Clone both side by side or the build fails before it starts.
 
 ```bash
-git clone https://github.com/justfatlard/pandorical.git
-git clone https://github.com/justfatlard/big-boats.git
+git clone https://github.com/fatlard1993/pandorical.git
+git clone https://github.com/fatlard1993/big-boats.git
 cd big-boats
 ./gradlew build
 ```
@@ -131,7 +131,7 @@ The built JAR will be in `build/libs/`.
 
 ## Issues & Support
 
-Report bugs and request features on [GitHub Issues](https://github.com/justfatlard/big-boats/issues).
+Report bugs and request features on [GitHub Issues](https://github.com/fatlard1993/big-boats/issues).
 
 ## License
 
