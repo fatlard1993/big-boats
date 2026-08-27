@@ -12,7 +12,7 @@
 		"issues": "https://github.com/fatlard1993/big-boats/issues"
 	},
 	"license": "MIT",
-	"icon": "icon.png",
+	"icon": "assets/big-boats-justfatlard/icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [
