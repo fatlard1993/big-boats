@@ -38,6 +38,8 @@ public class ShipLighting {
 	// Volatile: getPlacedLightPositions() is called from chunk-saving thread via writeCustomData.
 	// Reassigned (not mutated) in updatePositions and remove.
 	private volatile Set<BlockPos> placedLightPositions = Set.of();
+	/** Positions a light has moved off, cleared one update later so the two never gap. */
+	private volatile Set<BlockPos> pendingRemoval = Set.of();
 	private BlockPos lastLightUpdatePos = null;
 	private int lastLightUpdateYaw = 0;
 
@@ -91,22 +93,42 @@ public class ShipLighting {
 			Vec3 worldPos = pose.toWorld(source.relativePos());
 			BlockPos lightPos = BlockPos.containing(worldPos.x, worldPos.y, worldPos.z);
 
-			if (world.getBlockState(lightPos).isAir()) {
-				BlockState lightBlock = Blocks.LIGHT.defaultBlockState()
-					.setValue(LightBlock.LEVEL, source.lightLevel());
-				world.setBlock(lightPos, lightBlock, Block.UPDATE_CLIENTS);
+			BlockState existing = world.getBlockState(lightPos);
+			BlockState wanted = Blocks.LIGHT.defaultBlockState()
+				.setValue(LightBlock.LEVEL, source.lightLevel());
+
+			if (existing.isAir()) {
+				world.setBlock(lightPos, wanted, Block.UPDATE_CLIENTS);
+				newPositions.add(lightPos);
+			} else if (placedLightPositions.contains(lightPos) && existing.is(Blocks.LIGHT)) {
+				// A light that has not moved is already exactly right, and this is where the
+				// flicker came from: it is not air, so it never made the new set, so the sweep
+				// below took it out as though it had been left behind - and the next update put it
+				// straight back. Every light aboard blinking on and off for as long as the ship
+				// was under way, because standing still read as being gone.
+				if (!existing.equals(wanted)) world.setBlock(lightPos, wanted, Block.UPDATE_CLIENTS);
 				newPositions.add(lightPos);
 			}
 		}
 
-		for (BlockPos pos : placedLightPositions) {
-			if (!newPositions.contains(pos)) {
-				BlockState state = world.getBlockState(pos);
-				if (state.getBlock() == Blocks.LIGHT) {
-					world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
-				}
+		// Old lights are dropped one update LATE, not in the same breath as the new ones.
+		//
+		// This is where the flicker was. An update only happens because the ship moved, so every
+		// light is always hopping to a new block, and taking the old one out in the same tick as
+		// the new one goes in leaves the client relighting from scratch each time - which it does
+		// visibly. Letting the previous position linger through one cycle means there is never an
+		// instant when the ship is lit by fewer blocks than it should be, and the overlap costs a
+		// single extra light block, one block behind, on a ship that is moving anyway.
+		for (BlockPos pos : pendingRemoval) {
+			if (newPositions.contains(pos)) continue;
+			if (world.getBlockState(pos).is(Blocks.LIGHT)) {
+				world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
 			}
 		}
+
+		Set<BlockPos> retiring = new HashSet<>(placedLightPositions);
+		retiring.removeAll(newPositions);
+		pendingRemoval = Set.copyOf(retiring);
 
 		// Assign as immutable snapshot: safe for concurrent read by the chunk-saving thread
 		placedLightPositions = Set.copyOf(newPositions);
@@ -120,12 +142,18 @@ public class ShipLighting {
 	 * Call when docking or removing the ship.
 	 */
 	public void remove(ServerLevel world) {
-		for (BlockPos pos : placedLightPositions) {
+		// Both sets: a light the ship has moved off is still a light block standing in the world
+		// until its cycle comes round, and docking is exactly when that cycle never arrives.
+		Set<BlockPos> everywhere = new HashSet<>(placedLightPositions);
+		everywhere.addAll(pendingRemoval);
+
+		for (BlockPos pos : everywhere) {
 			BlockState state = world.getBlockState(pos);
 			if (state.getBlock() == Blocks.LIGHT) {
 				world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
 			}
 		}
+		pendingRemoval = Set.of();
 		placedLightPositions = Set.of();
 		lightSources.clear();
 	}
@@ -135,7 +163,11 @@ public class ShipLighting {
 	 * Used for serialization before dock() clears them.
 	 */
 	public List<BlockPos> getPlacedLightPositions() {
-		return new ArrayList<>(placedLightPositions);
+		// Both sets, because this is what a restart uses to find and clear the ship's lights, and a
+		// light waiting out its cycle is as real as any other.
+		Set<BlockPos> everywhere = new HashSet<>(placedLightPositions);
+		everywhere.addAll(pendingRemoval);
+		return List.copyOf(everywhere);
 	}
 
 	/**

@@ -1,5 +1,6 @@
 package justfatlard.big_boats.ship;
 
+import justfatlard.big_boats.integration.DyedChestPaint;
 import justfatlard.big_boats.mixin.BlockAttachedEntityAccessor;
 import justfatlard.big_boats.mixin.HangingEntityAccessor;
 import justfatlard.big_boats.util.RelativeBlockPos;
@@ -32,6 +33,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.TagValueOutput;
 import net.minecraft.world.phys.AABB;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -65,6 +67,113 @@ public class ShipDocking {
 	// Volatile: read by writeCustomData on chunk-saving thread.
 	private volatile List<BlockPos> dockedBlockPositions = List.of();
 	private volatile List<ShipDecoration> decorations = List.of();
+
+	/**
+	 * Write a ship block without asking its neighbours what they think.
+	 *
+	 * <p>A ship goes up and comes down one block at a time, so for most of both operations it is a
+	 * half-built structure - and {@code UPDATE_ALL}, which is what both used to pass, invites every
+	 * neighbour to react to that half-built state. Anything that needs something under it does
+	 * react: a carpet laid before its floor arrives, or left standing when its floor is taken away,
+	 * decides it has no support and pops off as an item. Rugs, torches, ladders, signs, rails,
+	 * buttons, pressure plates, banners - the entire class of block that makes a hull look lived in
+	 * was falling on the deck every time the ship set sail, and the ship sailed off without it.
+	 *
+	 * <p>{@code UPDATE_KNOWN_SHAPE} is the flag that says "I know what I am doing, do not re-derive
+	 * shapes" - the same one structure placement and pistons use for the same reason.
+	 */
+	private static final int STRUCTURE_WRITE = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
+
+	/** As above, and the block being cleared is kept by the ship rather than dropped. */
+	private static final int STRUCTURE_CLEAR =
+		Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
+
+	/**
+	 * Empty the sea out of the ship's enclosed spaces.
+	 *
+	 * <p>A ship displaces nothing while it is sailing: its blocks are not in the world, so the
+	 * water it left simply closes over the space. Docking puts back the hull and only the hull, so
+	 * a hold or a cabin comes back full to the deckhead - source blocks standing inside the ship,
+	 * which is not a leak anyone can find or plug.
+	 *
+	 * <p>Only genuinely enclosed space is drained, found by flooding inward from the outside of the
+	 * ship's own bounding box: anything the outside can reach is the sea and stays the sea, and
+	 * anything it cannot is a room. That distinction is what keeps this from draining the pond a
+	 * ship happens to be moored in, and it is also why an open boat needs nothing drained - its
+	 * deck is open to the sky, so nothing aboard is enclosed, and the hull riding on the surface
+	 * (see {@code ShipConfig.HULL_DRAFT}) is what keeps that deck dry instead.
+	 */
+	private static void bailOut(ServerLevel world, List<BlockPos> shipPositions) {
+		if (shipPositions.isEmpty()) return;
+
+		Set<BlockPos> hull = new HashSet<>(shipPositions);
+		BlockPos first = shipPositions.get(0);
+		int minX = first.getX(), minY = first.getY(), minZ = first.getZ();
+		int maxX = minX, maxY = minY, maxZ = minZ;
+		for (BlockPos pos : shipPositions) {
+			minX = Math.min(minX, pos.getX()); maxX = Math.max(maxX, pos.getX());
+			minY = Math.min(minY, pos.getY()); maxY = Math.max(maxY, pos.getY());
+			minZ = Math.min(minZ, pos.getZ()); maxZ = Math.max(maxZ, pos.getZ());
+		}
+
+		// Flood from the box's shell inward, through anything that is not hull. What this reaches
+		// is connected to the outside world; what it misses is sealed in.
+		Set<BlockPos> outside = new HashSet<>();
+		ArrayDeque<BlockPos> queue = new ArrayDeque<>();
+		for (int x = minX; x <= maxX; x++) {
+			for (int y = minY; y <= maxY; y++) {
+				for (int z = minZ; z <= maxZ; z++) {
+					boolean onShell = x == minX || x == maxX || y == minY || y == maxY
+						|| z == minZ || z == maxZ;
+					if (!onShell) continue;
+					BlockPos pos = new BlockPos(x, y, z);
+					if (hull.contains(pos) || !outside.add(pos)) continue;
+					queue.add(pos);
+				}
+			}
+		}
+		while (!queue.isEmpty()) {
+			BlockPos pos = queue.poll();
+			for (Direction direction : Direction.values()) {
+				BlockPos next = pos.relative(direction);
+				if (next.getX() < minX || next.getX() > maxX
+					|| next.getY() < minY || next.getY() > maxY
+					|| next.getZ() < minZ || next.getZ() > maxZ) continue;
+				if (hull.contains(next) || !outside.add(next)) continue;
+				queue.add(next);
+			}
+		}
+
+		int bailed = 0;
+		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+		for (int x = minX; x <= maxX; x++) {
+			for (int y = minY; y <= maxY; y++) {
+				for (int z = minZ; z <= maxZ; z++) {
+					cursor.set(x, y, z);
+					if (hull.contains(cursor) || outside.contains(cursor)) continue;
+					if (world.getBlockState(cursor).getFluidState().isEmpty()) continue;
+					world.setBlock(cursor.immutable(), Blocks.AIR.defaultBlockState(), STRUCTURE_CLEAR);
+					bailed++;
+				}
+			}
+		}
+
+		if (bailed > 0) LOGGER.debug("Bailed {} block(s) of water out of the ship", bailed);
+	}
+
+	/**
+	 * Let the world react, once the structure is whole.
+	 *
+	 * <p>The updates suppressed above are not unwanted, only premature: water still has to flow
+	 * into the hole a departing hull leaves, and redstone still has to notice a lever that arrived.
+	 * Run after the last block is written, every neighbour is reacting to the finished state, and
+	 * nothing is left half-supported to fall.
+	 */
+	private static void settle(ServerLevel world, List<BlockPos> positions) {
+		for (BlockPos pos : positions) {
+			world.updateNeighborsAt(pos, world.getBlockState(pos).getBlock(), null);
+		}
+	}
 
 	/**
 	 * Records world positions of all blocks after christening.
@@ -101,8 +210,10 @@ public class ShipDocking {
 			BlockState existing = world.getBlockState(worldPos);
 
 			if (existing.isAir() || existing.liquid()) {
-				world.setBlock(worldPos, rotatedState, Block.UPDATE_ALL);
+				world.setBlock(worldPos, rotatedState, STRUCTURE_WRITE);
 				newDockedPositions.add(worldPos);
+
+				block.paint().ifPresent(colour -> DyedChestPaint.lay(world, worldPos, colour));
 
 				if (block.hasBlockEntityData()) {
 					CompoundTag savedNbt = block.blockEntityData().get();
@@ -124,9 +235,16 @@ public class ShipDocking {
 				}
 			} else {
 				salvageObstructedBlock(world, block, worldPos);
+				// A painted chest that cannot be set down comes apart into a chest and its dye,
+				// which is what breaking one does. The colour was taken off its old position when
+				// the ship sailed, so without this the dye is simply gone.
+				block.paint().ifPresent(colour -> DyedChestPaint.refund(world, worldPos, colour));
 				blockedCount++;
 			}
 		}
+
+		bailOut(world, newDockedPositions);
+		settle(world, newDockedPositions);
 
 		dockedBlockPositions = List.copyOf(newDockedPositions);
 		LOGGER.debug("Dock placed {} blocks, {} obstructed, {} lost block entities",
@@ -185,7 +303,8 @@ public class ShipDocking {
 	public List<ShipBlock> removeBlocks(ServerLevel world, List<ShipBlock> blocks,
 										 double helmX, double helmY, double helmZ,
 										 ShipBlockUtils.SnappedRotation snap,
-										 Map<BlockPos, Integer> posToBlockIndex) {
+										 Map<BlockPos, Integer> posToBlockIndex,
+										 ShipSeats seats) {
 		int cos = snap.cos();
 		int sin = snap.sin();
 		net.minecraft.world.level.block.Rotation inverseRotation = ShipBlockUtils.yawToBlockRotation(-snap.yawDegrees());
@@ -194,13 +313,24 @@ public class ShipDocking {
 			dockedBlockPositions = List.copyOf(posToBlockIndex.keySet());
 		}
 
-		captureDecorations(world, posToBlockIndex, helmX, helmY, helmZ, cos, sin, inverseRotation);
+		captureDecorations(world, posToBlockIndex, helmX, helmY, helmZ, cos, sin, inverseRotation,
+			seats, new ShipPose(helmX, helmY, helmZ, snap.yawRadians()));
 
 		// Save block entity data and remove all placed blocks.
 		// Build mutable working copy, then return as immutable snapshot.
 		List<ShipBlock> updatedBlocks = new ArrayList<>(blocks);
 		for (BlockPos pos : dockedBlockPositions) {
 			if (posToBlockIndex.containsKey(pos)) {
+				// Paint first, while the chest is still standing at the position its colour is
+				// filed under. A moment later it is air and there is nothing left to ask.
+				String paint = DyedChestPaint.lift(world, pos);
+				if (paint != null) {
+					Integer painted = posToBlockIndex.get(pos);
+					if (painted != null) {
+						updatedBlocks.set(painted, updatedBlocks.get(painted).withPaint(paint));
+					}
+				}
+
 				BlockEntity blockEntity = world.getBlockEntity(pos);
 				if (blockEntity != null) {
 					Integer blockIndex = posToBlockIndex.get(pos);
@@ -216,17 +346,19 @@ public class ShipDocking {
 					}
 					world.removeBlockEntity(pos);
 				}
-				world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+				world.setBlock(pos, Blocks.AIR.defaultBlockState(), STRUCTURE_CLEAR);
 			}
 		}
 
+		settle(world, dockedBlockPositions);
 		dockedBlockPositions = List.of();
 		return List.copyOf(updatedBlocks);
 	}
 
 	private void captureDecorations(ServerLevel world, Map<BlockPos, Integer> posToBlockIndex,
 									 double helmX, double helmY, double helmZ,
-									 int cos, int sin, net.minecraft.world.level.block.Rotation inverseRotation) {
+									 int cos, int sin, net.minecraft.world.level.block.Rotation inverseRotation,
+									 ShipSeats seats, ShipPose pose) {
 		// Build bounding box from block positions
 		double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE, minZ = Double.MAX_VALUE;
 		double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
@@ -257,6 +389,14 @@ public class ShipDocking {
 					}
 				}
 			}
+			if (attachedToShip && attachedEntity instanceof net.minecraft.world.entity.decoration.Cushion cushion) {
+				// Furniture, not decoration. Everything else here is saved to NBT and deleted for
+				// the voyage; a cushion is something you sit on, so it sails with the ship as
+				// itself - see ShipSeats.
+				seats.take(cushion, pose);
+				continue;
+			}
+
 			if (attachedToShip) {
 				int worldDeltaX = attachedPos.getX() - (int) Math.floor(helmX);
 				int worldDeltaY = attachedPos.getY() - (int) Math.floor(helmY);

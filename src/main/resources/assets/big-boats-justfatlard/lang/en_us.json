@@ -12,10 +12,11 @@
   "big-boats.ship.obstructed": "%d ship block(s) couldn't be placed — space was obstructed. Items dropped nearby.",
   "big-boats.ship.lost_contents": "%d container(s) lost contents during docking — items dropped nearby",
   "big-boats.ship.absorbed": "Absorbed %d new blocks into ship!",
-  "big-boats.ship.absorption_capped": "%d adjacent blocks left behind — ship at max capacity (%d blocks)",
+  "big-boats.ship.absorption_capped": "%d adjacent blocks left behind — helm is rated for %d blocks",
   "big-boats.ship.piloting": "Now piloting ship",
   "big-boats.ship.piloting_named": "Now piloting %s",
   "big-boats.command.cleanup_lights": "Removed %d orphaned light block(s) in %d-block radius",
   "big-boats.ship.occupied": "Someone's already at the helm",
-  "big-boats.ship.structure_damaged": "Can't undock — ship blocks are missing or broken"
+  "big-boats.ship.structure_damaged": "Can't undock — ship blocks are missing or broken",
+  "enchantment.big-boats-justfatlard.tonnage": "Tonnage"
 }

@@ -31,7 +31,7 @@ A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any
 - Ships **auto-dock** when you dismount (places real blocks back)
 - Ships **auto-undock** when you board (converts to a rendered Pandorical structure)
 - **Block absorption**: Small structures touching your ship may be absorbed when undocking
-- **Grounding detection**: Can't sail if connected to a large landmass
+- **Grounding detection**: Can't sail if connected to a large landmass. Touching means the shapes meet: a slab beside a slab of the other half, or a block a step above a bottom slab, is not a connection
 - **Occupied check**: Only one pilot at a time
 - **Structure damage detection**: Can't undock if the ship structure is broken
 
@@ -89,33 +89,12 @@ S = Stick, I = Iron Ingot, P = Any Planks
 
 ## Pandorical
 
-Big Boats runs server-side, and Pandorical is a hard dependency (`fabric.mod.json`): the server will not load this mod without it. Two things route through it:
+Big Boats runs server-side, and Pandorical is required: the server will not load this mod without it. Two things route through it:
 
 - **Ship rendering**: a ship's blocks are drawn as a single batch-rendered Pandorical structure, posed and moved each tick to follow the ship. The ship entity itself uses Pandorical's `"invisible"` renderer and draws nothing; only the structure is visible.
 - **Piloting camera**: pull-back distance and third-person-back perspective are pushed to the player through Pandorical's camera API on mount and dismount.
 
 Clients are not the optional half here. A ship is invisible without Pandorical, so a vanilla client cannot see or pilot one at all.
-
-## Installation
-
-Install server-side alongside its declared dependencies (see `fabric.mod.json`); connecting clients need only Pandorical. Version targets live in `gradle.properties` (Minecraft, loader, Fabric API) and `fabric.mod.json` (Java).
-
-## Download
-
-Get the latest release from [GitHub Releases](https://github.com/fatlard1993/big-boats/releases).
-
-## Building from Source
-
-Big Boats builds against Pandorical's live source, not a published artifact: `settings.gradle` includes `../pandorical`. Clone both side by side or the build fails before it starts.
-
-```bash
-git clone https://github.com/fatlard1993/pandorical.git
-git clone https://github.com/fatlard1993/big-boats.git
-cd big-boats
-./gradlew build
-```
-
-The built JAR will be in `build/libs/`.
 
 ## Commands
 
@@ -129,9 +108,9 @@ The built JAR will be in `build/libs/`.
 - Single driver only
 - No ship ownership model (any player can mount any ship)
 
-## Issues & Support
+## Development
 
-Report bugs and request features on [GitHub Issues](https://github.com/fatlard1993/big-boats/issues).
+Installing, building and where to report problems are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## License
 

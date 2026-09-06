@@ -105,6 +105,7 @@ public class ShipCollisionEntities {
 		world.addFreshEntity(shulker);
 		collisionShulkers.put(block.relativePos(), shulker);
 		collisionShulkerUUIDs.add(shulker.getUUID());
+		ALL_COLLISION_SHULKERS.add(shulker.getUUID());
 		trackedChildEntityUUIDs.add(shulker.getUUID());
 	}
 
@@ -204,6 +205,7 @@ public class ShipCollisionEntities {
 				LOGGER.warn("Failed to discard collision shulker {}", shulker.getUUID(), e);
 			}
 		}
+		ALL_COLLISION_SHULKERS.removeAll(collisionShulkerUUIDs);
 		collisionShulkers.clear();
 		collisionShulkerUUIDs.clear();
 
@@ -235,6 +237,20 @@ public class ShipCollisionEntities {
 
 	public boolean isHelmInteraction(Entity entity) {
 		return helmInteraction != null && helmInteraction.equals(entity);
+	}
+
+	/**
+	 * Every collision shulker on the server, by id.
+	 *
+	 * <p>Read by {@code CollisionShulkerMixin} to keep these out of anything that looks at what a
+	 * player is pointing at. Static because a mixin has no way to reach the ship that owns one.
+	 */
+	private static final java.util.Set<UUID> ALL_COLLISION_SHULKERS =
+		java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	/** Whether this entity is one of the invisible boxes holding a deck up. */
+	public static boolean isHullCollision(UUID id) {
+		return !ALL_COLLISION_SHULKERS.isEmpty() && ALL_COLLISION_SHULKERS.contains(id);
 	}
 
 	public boolean isCollisionShulker(Entity entity) {

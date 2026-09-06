@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "condition": {
+        "type": "minecraft:survives_explosion"
+      },
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "big-boats-justfatlard:helm"
+        }
+      ],
+      "rolls": 1.0
+    }
+  ],
+  "random_sequence": "big-boats-justfatlard:blocks/helm"
+}

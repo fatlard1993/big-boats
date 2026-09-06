@@ -20,7 +20,9 @@ public sealed interface DetectionResult {
 	record TooSmall(int found, int required) implements Failure {
 		public String message() { return "Ship too small (minimum " + required + " blocks required, found " + found + ")"; }
 	}
-	record TooLarge() implements Failure {
-		public String message() { return "Ship exceeds maximum block limit"; }
+	record TooLarge(int limit) implements Failure {
+		public String message() {
+			return "Ship is too big for this helm (" + limit + " blocks) — enchant it with Tonnage";
+		}
 	}
 }

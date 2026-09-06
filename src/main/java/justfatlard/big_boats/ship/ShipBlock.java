@@ -16,17 +16,25 @@ import java.util.Optional;
  * Stores the block's position relative to the helm, its block state,
  * and optional block entity data (for chests, furnaces, signs, etc.).
  */
-public record ShipBlock(RelativeBlockPos relativePos, BlockState blockState, Optional<CompoundTag> blockEntityData) {
+public record ShipBlock(RelativeBlockPos relativePos, BlockState blockState,
+						Optional<CompoundTag> blockEntityData, Optional<String> paint) {
 	public static final Codec<ShipBlock> CODEC = RecordCodecBuilder.create(instance ->
 		instance.group(
 			RelativeBlockPos.CODEC.fieldOf("pos").forGetter(ShipBlock::relativePos),
 			BlockState.CODEC.fieldOf("state").forGetter(ShipBlock::blockState),
-			CompoundTag.CODEC.optionalFieldOf("nbt").forGetter(ShipBlock::blockEntityData)
+			CompoundTag.CODEC.optionalFieldOf("nbt").forGetter(ShipBlock::blockEntityData),
+			// Optional so a ship saved before chests could sail painted still reads.
+			Codec.STRING.optionalFieldOf("paint").forGetter(ShipBlock::paint)
 		).apply(instance, ShipBlock::new)
 	);
 
 	public ShipBlock(RelativeBlockPos relativePos, BlockState blockState) {
-		this(relativePos, blockState, Optional.empty());
+		this(relativePos, blockState, Optional.empty(), Optional.empty());
+	}
+
+	public ShipBlock(RelativeBlockPos relativePos, BlockState blockState,
+			Optional<CompoundTag> blockEntityData) {
+		this(relativePos, blockState, blockEntityData, Optional.empty());
 	}
 
 	/**
@@ -48,7 +56,12 @@ public record ShipBlock(RelativeBlockPos relativePos, BlockState blockState, Opt
 	}
 
 	public ShipBlock withBlockEntityData(CompoundTag nbt) {
-		return new ShipBlock(relativePos, blockState, Optional.ofNullable(nbt));
+		return new ShipBlock(relativePos, blockState, Optional.ofNullable(nbt), paint);
+	}
+
+	/** The same block, remembering the colour it was painted where it stood. */
+	public ShipBlock withPaint(String colour) {
+		return new ShipBlock(relativePos, blockState, blockEntityData, Optional.ofNullable(colour));
 	}
 
 	/**

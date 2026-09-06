@@ -12,6 +12,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.syncher.SynchedEntityData;
+import justfatlard.big_boats.block.HelmBlock;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -103,6 +104,18 @@ public class MultiBlockShipEntity extends Entity {
 	private final ShipCollisionEntities collisionEntities = new ShipCollisionEntities();
 
 	private final ShipDocking docking = new ShipDocking();
+	private final ShipSeats seats = new ShipSeats();
+	private final ShipRiders riders = new ShipRiders();
+
+	/**
+	 * Largest this ship may grow, from its helm's Tonnage rating.
+	 *
+	 * <p>Defaults to the absolute ceiling rather than to a plain helm's rating, because a ship
+	 * saved before helms had ratings has nothing to say about its own - and reading "no rating" as
+	 * "a hundred blocks" would have the next rescan quietly leave most of an existing ship behind.
+	 * A ship already afloat keeps whatever size it was built at.
+	 */
+	private int capacity = ShipConfig.MAX_BLOCKS;
 
 	// Tracks the water surface when over water; holds last-known value over land.
 	// Volatile: read by writeCustomData on chunk-saving thread.
@@ -130,7 +143,9 @@ public class MultiBlockShipEntity extends Entity {
 	private Set<BlockPos> cachedHullPositions = Set.of();
 	private int cachedHullTick = -1;
 
-	private int ticksSinceWaterCheck = 0;
+	private int ticksSinceHelmCheck = 0;
+
+	private int ticksSinceSeatScan = 0;
 
 	// Set by a named christening bottle
 	private String shipName = null;
@@ -215,6 +230,11 @@ public class MultiBlockShipEntity extends Entity {
 		this.setYRot(snap.yawDegrees());
 		helmX = Math.round(helmX);
 		helmZ = Math.round(helmZ);
+
+		// Before the cushions are released: the last sailing tick already put them over the hull,
+		// and the deck they were floating above is about to become blocks again underneath them.
+		seats.updatePositions(pose());
+		seats.release();
 
 		ShipDocking.DockStats stats = docking.placeBlocks(world, blocks, helmX, this.getY(), helmZ, snap);
 		docking.restoreDecorations(world, helmX, this.getY(), helmZ, snap);
@@ -315,7 +335,7 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		// Capture decorations, snapshot block entities, remove blocks from world
-		blocks = docking.removeBlocks(world, blocks, helmX, this.getY(), helmZ, snap, posToBlockIndex);
+		blocks = docking.removeBlocks(world, blocks, helmX, this.getY(), helmZ, snap, posToBlockIndex, seats);
 
 		// Position entity at passenger seat and sync structure
 		Vec3 seatWorld = computeSeatWorldPos();
@@ -340,6 +360,37 @@ public class MultiBlockShipEntity extends Entity {
 
 	public ShipPose pose() {
 		return new ShipPose(helmX, this.getY(), helmZ, yawRadians);
+	}
+
+	/** Whether this entity is one of the ship's own: collision hulls, the helm interaction. */
+	public boolean ownsChildEntity(Entity entity) {
+		return collisionEntities.getTrackedChildEntityUUIDs().contains(entity.getUUID());
+	}
+
+	/**
+	 * The pose this ship will hold in {@code ticks}, if it keeps doing what it just did.
+	 *
+	 * <p>Straight-line extrapolation from the last tick's movement. It does not need to be right
+	 * about the future - a ship under way changes course slowly, and being wrong costs a fraction
+	 * of a block on the tick it turns, against the better part of one lost on every tick otherwise.
+	 */
+	private static ShipPose leadBy(ShipPose from, ShipPose to, double ticks) {
+		return new ShipPose(
+			to.helmX() + (to.helmX() - from.helmX()) * ticks,
+			to.helmY() + (to.helmY() - from.helmY()) * ticks,
+			to.helmZ() + (to.helmZ() - from.helmZ()) * ticks,
+			(float) (to.yawRadians() + (to.yawRadians() - from.yawRadians()) * ticks));
+	}
+
+	/** How far the hull reaches from the entity anchor, for entity queries over the whole ship. */
+	private double hullReach() {
+		double reach = 1;
+		for (ShipBlock block : blocks) {
+			reach = Math.max(reach, Math.abs(block.relativePos().x()));
+			reach = Math.max(reach, Math.abs(block.relativePos().y()));
+			reach = Math.max(reach, Math.abs(block.relativePos().z()));
+		}
+		return reach + 1;
 	}
 
 	private Vec3 computeSeatWorldPos() {
@@ -377,7 +428,7 @@ public class MultiBlockShipEntity extends Entity {
 			relToWorldPos.put(block.relativePos(), worldPos);
 		}
 
-		var detectionResult = FloodFillDetector.detect(world, helmWorldPos);
+		var detectionResult = FloodFillDetector.detect(world, helmWorldPos, capacity);
 		if (!(detectionResult instanceof justfatlard.big_boats.detection.DetectionResult.Success successResult)) {
 			String reason = detectionResult instanceof justfatlard.big_boats.detection.DetectionResult.Failure failure
 				? failure.message() : "unknown";
@@ -448,7 +499,7 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		// Cap absorbed blocks to prevent exceeding MAX_BLOCKS
-		int availableCapacity = ShipConfig.MAX_BLOCKS - survivingBlocks.size();
+		int availableCapacity = capacity - survivingBlocks.size();
 		lastRescanRejectedBlocks = 0;
 		if (newBlocks.size() > availableCapacity) {
 			lastRescanRejectedBlocks = newBlocks.size() - availableCapacity;
@@ -589,7 +640,7 @@ public class MultiBlockShipEntity extends Entity {
 				}
 				if (lastRescanRejectedBlocks > 0) {
 					player.sendSystemMessage(
-						Component.translatable("big-boats.ship.absorption_capped", lastRescanRejectedBlocks, ShipConfig.MAX_BLOCKS)
+						Component.translatable("big-boats.ship.absorption_capped", lastRescanRejectedBlocks, capacity)
 							.withStyle(ChatFormatting.YELLOW), true);
 				}
 				Component pilotMessage = hasShipName()
@@ -649,6 +700,7 @@ public class MultiBlockShipEntity extends Entity {
 		super.tick();
 
 		if (state != ShipState.SAILING) {
+			if (state == ShipState.DOCKED) checkHelmSurvives();
 			return;
 		}
 
@@ -661,11 +713,19 @@ public class MultiBlockShipEntity extends Entity {
 		// Periodically adapt float height to water surface below the ship.
 		// Samples multiple columns (helm + extremes) so long ships don't embed
 		// one end in terrain when approaching shore.
-		ticksSinceWaterCheck++;
-		if (ticksSinceWaterCheck >= ShipConfig.WATER_SURFACE_CHECK_INTERVAL) {
-			ticksSinceWaterCheck = 0;
-			sampleWaterSurface();
-		}
+		// No water sampling. A ship holds the height it was christened at and nothing moves it but
+		// its own collision.
+		//
+		// Chasing the water surface was the source of every altitude complaint in turn: floating by
+		// the helm sank tall ships, floating by the keel needed a draft nobody could pick, and
+		// holding a measured height above the water made an airship rise and fall with whatever
+		// happened to be underneath it - down over land, up over the sea, following terrain it had
+		// no business following. Minecraft's water is at one level nearly everywhere, so tracking it
+		// bought almost nothing and cost an altitude bug every time.
+
+		// The frame everyone aboard is still standing in. Captured before a single axis moves,
+		// because riders are carried by the difference between this and where the ship ends up.
+		ShipPose entryPose = pose();
 
 		// Floating physics: ease toward water surface
 		double currentY = this.getY();
@@ -778,7 +838,35 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		ShipPose tickPose = pose();
-		collisionEntities.tickUpdate(tickPose);
+
+		// The collision and the furniture are placed AHEAD of the ship, by as far as it travels
+		// while a client is catching up to them.
+		//
+		// The rendered deck is posed exactly every tick; the entities that back it are ordinary
+		// entities, and a client does not put those where it is told - it slides them there over
+		// about three ticks. So the thing you see and the thing you stand on came apart the moment
+		// the ship got moving: the floor you could see was solid and the floor underneath you was
+		// three ticks astern, which is how a rider standing still falls through it, and how a
+		// cushion ends up sitting a block off the deck it is bolted to. Sending them where the ship
+		// WILL be is what makes them arrive where it IS.
+		ShipPose leadPose = leadBy(entryPose, tickPose, ShipConfig.CLIENT_INTERP_TICKS);
+		collisionEntities.tickUpdate(leadPose);
+		seats.updatePositions(leadPose);
+
+		// After the collision entities, so anything standing on the deck is being carried toward
+		// hull that has already arrived rather than hull it would fall through.
+		if (this.level() instanceof ServerLevel riderWorld) {
+			riders.carry(riderWorld, this, blocks, entryPose, tickPose,
+				this.getBoundingBox().inflate(hullReach()));
+		}
+
+		// Ahead of vanilla's own hundred-tick check, so a cushion is taken back aboard before it
+		// gets round to asking what it is resting on.
+		if (++ticksSinceSeatScan >= ShipConfig.SEAT_SCAN_INTERVAL
+				&& this.level() instanceof ServerLevel scanWorld) {
+			ticksSinceSeatScan = 0;
+			seats.scan(scanWorld, tickPose, this.getBoundingBox().inflate(hullReach()));
+		}
 
 		if (lighting.hasLightSources() && this.level() instanceof ServerLevel serverWorld) {
 			if (lighting.needsUpdate(tickPose)) {
@@ -786,6 +874,22 @@ public class MultiBlockShipEntity extends Entity {
 			}
 		}
 
+	}
+
+	/**
+	 * Step off onto the deck, not into the sea.
+	 *
+	 * <p>Vanilla goes looking for solid ground beside the vehicle to put the passenger down on,
+	 * and at the moment of dismount there is none to find: the ship is still blocks-in-waiting and
+	 * the only thing holding anyone up is a set of invisible collision entities, which that search
+	 * does not count as ground. Finding nothing, it drops them to whatever is under the hull, which
+	 * out at sea is the sea. Standing them exactly where they already are is right in both
+	 * directions - docking puts the deck back under their feet a moment later, and a dismount that
+	 * does not dock leaves them on the collision they were already standing on.
+	 */
+	@Override
+	public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
+		return passenger.position();
 	}
 
 	@Override
@@ -803,48 +907,6 @@ public class MultiBlockShipEntity extends Entity {
 	}
 
 	@Override
-	public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
-		Vec3[] offsets = {
-			// Cardinals at distance 2
-			new Vec3(2, 0, 0),
-			new Vec3(-2, 0, 0),
-			new Vec3(0, 0, 2),
-			new Vec3(0, 0, -2),
-			// Diagonals
-			new Vec3(2, 0, 2),
-			new Vec3(-2, 0, 2),
-			new Vec3(2, 0, -2),
-			new Vec3(-2, 0, -2),
-			// Cardinals at distance 3
-			new Vec3(3, 0, 0),
-			new Vec3(-3, 0, 0),
-			new Vec3(0, 0, 3),
-			new Vec3(0, 0, -3),
-			// Above
-			new Vec3(0, 2, 0),
-			new Vec3(0, 3, 0),
-		};
-
-		Level world = this.level();
-		Vec3 thisPos = new Vec3(this.getX(), this.getY(), this.getZ());
-		Vec3 passengerPos = new Vec3(passenger.getX(), passenger.getY(), passenger.getZ());
-
-		for (Vec3 offset : offsets) {
-			Vec3 pos = thisPos.add(offset);
-			if (world.noCollision(passenger, passenger.getBoundingBox().move(pos.subtract(passengerPos)))) {
-				return pos;
-			}
-		}
-
-		// Last resort: place above the ship's highest block to avoid suffocation after dock
-		int maxRelY = 0;
-		for (ShipBlock block : blocks) {
-			maxRelY = Math.max(maxRelY, block.relativePos().y());
-		}
-		return thisPos.add(0, maxRelY + 2, 0);
-	}
-
-	@Override
 	protected void readAdditionalSaveData(ValueInput view) {
 		this.blocks = List.copyOf(view.read(BLOCKS_KEY, BLOCKS_CODEC).orElse(List.of()));
 
@@ -858,6 +920,7 @@ public class MultiBlockShipEntity extends Entity {
 		// Guard against corrupt data; only horizontal directions are valid for helms
 		this.helmFacing = loaded.getAxis().isHorizontal() ? loaded : Direction.NORTH;
 
+		this.capacity = view.getIntOr("capacity", ShipConfig.MAX_BLOCKS);
 		this.floatTargetY = view.getDoubleOr("target_y", this.getY());
 
 		float savedYawDegrees = view.getFloatOr("ship_yaw", 0f);
@@ -918,6 +981,7 @@ public class MultiBlockShipEntity extends Entity {
 		// Ordinal encoding is fragile if the Direction enum is ever reordered; kept for
 		// backward compatibility. readAdditionalSaveData bounds-checks and guards horizontals.
 		view.putInt("helm_facing", helmFacing.ordinal());
+		view.putInt("capacity", capacity);
 		view.putDouble("target_y", floatTargetY);
 		view.putFloat("ship_yaw", (float) Math.toDegrees(yawRadians));
 		view.putDouble("helm_x", helmX);
@@ -992,6 +1056,11 @@ public class MultiBlockShipEntity extends Entity {
 	public double getHelmZ() { return helmZ; }
 	public float getYawRadians() { return yawRadians; }
 
+	/** Set from the helm's Tonnage rating when the ship is christened. */
+	public void setCapacity(int capacity) {
+		this.capacity = capacity;
+	}
+
 	public BlockPos getHelmBlockPos() {
 		return BlockPos.containing(helmX, this.getY(), helmZ);
 	}
@@ -1054,80 +1123,33 @@ public class MultiBlockShipEntity extends Entity {
 	}
 
 	/**
-	 * Samples water surface at multiple points along the ship's extent.
-	 * Uses the maximum surface height so the ship floats above the shallowest water,
-	 * preventing the far end from embedding in terrain when approaching shore.
+	 * A docked ship with no helm left is a ghost, so it lets go.
+	 *
+	 * <p>The helm is the whole of a docked ship's interface: mounting looks for a ship whose helm
+	 * position is the block you clicked, and there is no other way to reach one. Destroy that block
+	 * and the entity remained, holding title to every block of the hull - unsteerable, because
+	 * nothing could be clicked to steer it, and unchristenable, because christening refuses blocks
+	 * another ship already owns. The hull became permanently inert: not a ship, and not free to
+	 * become one either.
+	 *
+	 * <p>Discarding while DOCKED leaves the blocks exactly where they stand - they are real world
+	 * blocks, not the virtual ones a sailing ship carries - so this gives the hull back rather than
+	 * taking it away. Build a new helm and christen it again.
 	 */
-	private void sampleWaterSurface() {
-		Level world = this.level();
-		int startY = (int) Math.floor(this.getY());
-		ShipPose currentPose = pose();
+	private void checkHelmSurvives() {
+		if (!(this.level() instanceof ServerLevel world)) return;
+		if (++ticksSinceHelmCheck < ShipConfig.DOCKED_HELM_CHECK_INTERVAL) return;
+		ticksSinceHelmCheck = 0;
 
-		// Find ship's extreme blocks along the forward axis
-		int minRelX = 0, maxRelX = 0, minRelZ = 0, maxRelZ = 0;
-		for (ShipBlock block : blocks) {
-			minRelX = Math.min(minRelX, block.relativePos().x());
-			maxRelX = Math.max(maxRelX, block.relativePos().x());
-			minRelZ = Math.min(minRelZ, block.relativePos().z());
-			maxRelZ = Math.max(maxRelZ, block.relativePos().z());
-		}
+		BlockPos helmPos = getHelmBlockPos();
+		// Only where the answer is knowable. An unloaded chunk has no block to ask about, and
+		// "absent" is the wrong reading of "not here right now".
+		if (!world.isLoaded(helmPos)) return;
+		if (world.getBlockState(helmPos).getBlock() instanceof HelmBlock) return;
 
-		// Sample at helm (center), bow (max extent), and stern (min extent)
-		RelativeBlockPos[] samplePoints = {
-			RelativeBlockPos.ORIGIN,
-			new RelativeBlockPos(minRelX, 0, minRelZ),
-			new RelativeBlockPos(maxRelX, 0, maxRelZ),
-		};
-
-		double maxSurface = Double.NEGATIVE_INFINITY;
-		boolean foundWater = false;
-		for (RelativeBlockPos sample : samplePoints) {
-			Vec3 worldPos = currentPose.toWorld(sample);
-			OptionalDouble surface = findWaterSurface(world,
-				(int) Math.floor(worldPos.x), startY, (int) Math.floor(worldPos.z));
-			if (surface.isPresent()) {
-				maxSurface = Math.max(maxSurface, surface.getAsDouble());
-				foundWater = true;
-			}
-		}
-
-		if (foundWater) {
-			floatTargetY = maxSurface;
-		}
-	}
-
-	/**
-	 * Finds the water surface Y at the given column, or empty if no water (ship is over land).
-	 */
-	private static OptionalDouble findWaterSurface(Level world, int x, int startY, int z) {
-		int scanBottom = startY - ShipConfig.WATER_SURFACE_SCAN_DEPTH;
-		int waterTop = Integer.MIN_VALUE;
-
-		BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
-
-		// Scan from 2 above current Y (ship may be rising) down to scan depth
-		for (int y = startY + 2; y >= scanBottom; y--) {
-			BlockState stateAtY = world.getBlockState(scanPos.set(x, y, z));
-			if (stateAtY.liquid()) {
-				waterTop = y;
-				break;
-			}
-		}
-
-		if (waterTop == Integer.MIN_VALUE) {
-			return OptionalDouble.empty();
-		}
-
-		// Scan up from the water to find the surface (up to 4 above start for deep water)
-		for (int y = waterTop + 1; y <= startY + 4; y++) {
-			BlockState stateAtY = world.getBlockState(scanPos.set(x, y, z));
-			if (!stateAtY.liquid()) {
-				return OptionalDouble.of(y);
-			}
-			waterTop = y;
-		}
-
-		return OptionalDouble.of(waterTop + 1);
+		LOGGER.info("Docked ship '{}' has lost its helm at {}; releasing its {} blocks",
+			shipName != null ? shipName : "unnamed", helmPos, blocks.size());
+		this.discard();
 	}
 
 	@Override
@@ -1154,6 +1176,9 @@ public class MultiBlockShipEntity extends Entity {
 
 		// Idempotent; safe even if dock/undock already handled these
 		collisionEntities.discardAll();
+		// Otherwise the cushions stay exempt from the ground check for the rest of the session,
+		// held by a ship that no longer exists.
+		seats.release();
 
 		if (this.level() instanceof ServerLevel serverWorld) {
 			lighting.remove(serverWorld);

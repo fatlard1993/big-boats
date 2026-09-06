@@ -1,0 +1,20 @@
+{
+  "description": {
+    "translate": "enchantment.big-boats-justfatlard.tonnage"
+  },
+  "supported_items": "#big-boats-justfatlard:enchantable/tonnage",
+  "primary_items": "#big-boats-justfatlard:enchantable/tonnage",
+  "weight": 5,
+  "max_level": 3,
+  "anvil_cost": 4,
+  "min_cost": {
+    "base": 8,
+    "per_level_above_first": 10
+  },
+  "max_cost": {
+    "base": 28,
+    "per_level_above_first": 10
+  },
+  "slots": ["any"],
+  "effects": {}
+}

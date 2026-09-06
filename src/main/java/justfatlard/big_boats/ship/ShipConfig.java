@@ -22,7 +22,30 @@ public final class ShipConfig {
 	// --- Size limits ---
 
 	// Upper bound on flood-fill detection. Balances ship ambition vs. server entity budget.
+	/**
+	 * The largest ship any helm can command: the Tonnage III rating.
+	 *
+	 * <p>Also the ceiling on every internal search bound, which is why it stays a plain constant
+	 * rather than becoming per-ship - those bounds are about not walking the world forever, not
+	 * about what a particular helm is rated for.
+	 */
 	public static final int MAX_BLOCKS = 2000;
+
+	/**
+	 * Ship size a helm can hold together, by Tonnage level.
+	 *
+	 * <p>Index 0 is a plain helm off the crafting table, and 100 blocks is a boat rather than a
+	 * barge - enough to be worth sailing and cheap enough to try. The enchantment is the whole of
+	 * the progression from there, so a big ship is something earned rather than the only size on
+	 * offer.
+	 */
+	private static final int[] CAPACITY_BY_TONNAGE = {100, 400, 1000, MAX_BLOCKS};
+
+	/** Capacity for an enchantment level, clamped so an over-levelled helm is still answerable. */
+	public static int capacityForTonnage(int tonnage) {
+		if (tonnage <= 0) return CAPACITY_BY_TONNAGE[0];
+		return CAPACITY_BY_TONNAGE[Math.min(tonnage, CAPACITY_BY_TONNAGE.length - 1)];
+	}
 
 	// Helm + at least one other block. A lone helm is not a ship.
 	public static final int MIN_BLOCKS = 2;
@@ -44,19 +67,36 @@ public final class ShipConfig {
 	public static final double COLLISION_UPDATE_POS_THRESHOLD = 0.5;
 
 	// Fallback: update at least every 5 ticks (4x/sec) even if thresholds aren't met.
-	public static final int COLLISION_UPDATE_TICK_INTERVAL = 5;
+	/**
+	 * Every tick. The hull's collision used to be allowed to fall five ticks or half a block behind
+	 * the ship before it was worth moving, which is a long way to be wrong about where the floor is
+	 * - a rider standing still on a deck that had left without them simply dropped through it.
+	 */
+	public static final int COLLISION_UPDATE_TICK_INTERVAL = 1;
 
-	// --- Water surface tracking ---
+	/**
+	 * How long a client takes to slide an entity to where it was told it is.
+	 *
+	 * <p>Vanilla interpolates entity positions over roughly this many ticks rather than snapping
+	 * them, so anything of the ship's that is an entity - its collision, its cushions - arrives
+	 * this far behind the deck those things belong to, which is drawn exactly. They are sent ahead
+	 * by this much so that the sliding lands them in the right place.
+	 */
+	public static final double CLIENT_INTERP_TICKS = 3.0;
 
-	// Check water surface every 10 ticks (2x/sec). Smooth enough for wave-following.
-	public static final int WATER_SURFACE_CHECK_INTERVAL = 10;
-
-	// Scan depth below ship for water. 32 covers deep ocean biomes (max ~30 blocks deep).
-	public static final int WATER_SURFACE_SCAN_DEPTH = 32;
-
-	// --- Floating / buoyancy ---
+	// --- Height keeping ---
+	// A ship holds the height it was christened at; nothing tracks the water any more.
 
 	// Y position delta below which the ship is considered at target height. Prevents jitter.
+	/**
+	 * Ticks between a sailing ship looking for cushions it should be carrying. Comfortably under
+	 * vanilla's own hundred-tick support check, which is the thing being got in front of.
+	 */
+	public static final int SEAT_SCAN_INTERVAL = 40;
+
+	/** Ticks between a docked ship checking that it still has a helm to be steered by. */
+	public static final int DOCKED_HELM_CHECK_INTERVAL = 40;
+
 	public static final double FLOAT_SNAP_THRESHOLD = 0.01;
 
 	// Fraction of Y distance to close per tick. 0.1 = 10% per tick ≈ smooth ease-in.
@@ -78,6 +118,15 @@ public final class ShipConfig {
 
 	// --- Camera (Pandorical CameraApi hints, pushed server-side on mount/dismount) ---
 	// Distance scales with ship size: MIN + blockCount * PER_BLOCK, clamped to [MIN, MAX].
+	/**
+	 * Camera pull-back for someone sitting on a cushion rather than steering.
+	 *
+	 * <p>Deliberately under {@link #MIN_CAMERA_DISTANCE}, which is where the pilot's own view
+	 * starts before it grows with the ship: a passenger gets enough of a step back to see the deck
+	 * they are on, and the wider view stays the helm's.
+	 */
+	public static final float PASSENGER_CAMERA_DISTANCE = 4.0f;
+
 	public static final float MIN_CAMERA_DISTANCE = 6.0f;
 	public static final float MAX_CAMERA_DISTANCE = 20.0f;
 	public static final float CAMERA_DISTANCE_PER_BLOCK = 0.15f;

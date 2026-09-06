@@ -1,6 +1,9 @@
 package justfatlard.big_boats;
 
 import justfatlard.big_boats.block.HelmBlock;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.item.enchantment.Enchantment;
+import justfatlard.big_boats.block.HelmBlockEntity;
 import justfatlard.big_boats.ship.MultiBlockShipEntity;
 import justfatlard.big_boats.ship.ShipConfig;
 import justfatlard.big_boats.ship.ShipInteraction;
@@ -58,6 +61,11 @@ public class BigBoats implements ModInitializer {
 		return ResourceKey.create(Registries.BLOCK, Identifier.fromNamespaceAndPath(MOD_ID, name));
 	}
 
+	private static ResourceKey<BlockEntityType<?>> blockEntityKeyOf(String name) {
+		return ResourceKey.create(Registries.BLOCK_ENTITY_TYPE,
+			Identifier.fromNamespaceAndPath(MOD_ID, name));
+	}
+
 	private static ResourceKey<EntityType<?>> entityKeyOf(String name) {
 		return ResourceKey.create(Registries.ENTITY_TYPE, Identifier.fromNamespaceAndPath(MOD_ID, name));
 	}
@@ -81,7 +89,23 @@ public class BigBoats implements ModInitializer {
 		HELM_BLOCK,
 		new Item.Properties()
 			.setId(HELM_ITEM_KEY)
+			// So an enchanting table will take it at all. Without an enchantability the table
+			// refuses the item outright and Tonnage could only ever be applied from a book.
+			.enchantable(1)
 	);
+
+	/**
+	 * How large a ship a helm is rated to command. Three levels, and the plain helm below them.
+	 *
+	 * @see justfatlard.big_boats.ship.ShipConfig#capacityForTonnage(int)
+	 */
+	public static final ResourceKey<Enchantment> TONNAGE = ResourceKey.create(
+		Registries.ENCHANTMENT,
+		Identifier.fromNamespaceAndPath(MOD_ID, "tonnage")
+	);
+
+	public static final BlockEntityType<HelmBlockEntity> HELM_BLOCK_ENTITY_TYPE =
+		new BlockEntityType<>(HelmBlockEntity::new, java.util.Set.of(HELM_BLOCK));
 
 	public static final ResourceKey<EntityType<?>> MULTI_BLOCK_SHIP_ENTITY_KEY = entityKeyOf("ship");
 	public static final EntityType<MultiBlockShipEntity> MULTI_BLOCK_SHIP_ENTITY_TYPE = EntityType.Builder
@@ -125,6 +149,8 @@ public class BigBoats implements ModInitializer {
 
 		Registry.register(BuiltInRegistries.ITEM, CHRISTENING_BOTTLE_KEY.identifier(), CHRISTENING_BOTTLE);
 		Registry.register(BuiltInRegistries.ITEM, HELM_ITEM_KEY.identifier(), HELM_ITEM);
+		Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE,
+			blockEntityKeyOf("helm").identifier(), HELM_BLOCK_ENTITY_TYPE);
 
 		Registry.register(BuiltInRegistries.ENTITY_TYPE, MULTI_BLOCK_SHIP_ENTITY_KEY.identifier(), MULTI_BLOCK_SHIP_ENTITY_TYPE);
 		Registry.register(BuiltInRegistries.ENTITY_TYPE, CHRISTENING_BOTTLE_ENTITY_KEY.identifier(), CHRISTENING_BOTTLE_ENTITY_TYPE);

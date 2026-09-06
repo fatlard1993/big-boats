@@ -55,14 +55,21 @@ public final class BoatKitDialogue {
 				Component.literal("Is there anything bigger than a rowboat?"),
 				MIN_REPUTATION, Integer.MAX_VALUE)));
 
-		DialogueRegistry.registerDialogueHandler(OPTION_ID, BoatKitDialogue::sell);
+		// Asking is asking and paying is paying. The old handler charged the
+		// moment the question was clicked; now the fisherman makes the offer,
+		// and the emeralds only move on the button that says they will.
+		DialogueRegistry.registerRichDialogueHandler(OPTION_ID, (villager, player, optionId) ->
+			DialogueRegistry.Reply.of("There is. It is not free, mind - " + PRICE
+					+ " emeralds and I will set you up with the makings and tell you the rest.")
+				.option("*pay the " + PRICE + " emeralds*", BoatKitDialogue::sell)
+				.walkAway("Not today, then."));
 	}
 
-	private static Component sell(net.minecraft.world.entity.npc.villager.Villager villager,
+	private static DialogueRegistry.Reply sell(net.minecraft.world.entity.npc.villager.Villager villager,
 			ServerPlayer player, String optionId) {
 		if (countEmeralds(player) < PRICE) {
-			return Component.literal("There is. It is not free, mind - " + PRICE
-				+ " emeralds and I will set you up with the makings and tell you the rest.");
+			return DialogueRegistry.Reply.of("That is not " + PRICE + " emeralds. Come back when it is - the water is patient.")
+				.walkAway("*count your pockets*");
 		}
 
 		takeEmeralds(player);
@@ -74,11 +81,11 @@ public final class BoatKitDialogue {
 		// one of them finally answers what a heart of the sea is for.
 		player.awardRecipesByKey(List.of(HELM_RECIPE, BOTTLE_RECIPE));
 
-		return Component.literal(
+		return DialogueRegistry.Reply.of(
 			"Build the hull like a house, then put the helm where you would stand. "
 			+ "Break the bottle on it and it stops being a building. "
 			+ "The bottle is a heart of the sea in glass - you have been carrying one about for years, I expect.")
-			.withStyle(ChatFormatting.WHITE);
+			.walkAway("To the water, then.");
 	}
 
 	private static int countEmeralds(ServerPlayer player) {

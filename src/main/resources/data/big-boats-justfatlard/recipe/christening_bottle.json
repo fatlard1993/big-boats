@@ -2,7 +2,6 @@
   "type": "minecraft:crafting_shapeless",
   "category": "misc",
   "ingredients": [
-    "minecraft:heart_of_the_sea",
     "minecraft:glass_bottle"
   ],
   "result": {

@@ -30,6 +30,7 @@
 		"pandorical": "*"
 	},
 	"suggests": {
-		"village-quests-justfatlard": "*"
+		"village-quests-justfatlard": "*",
+		"chest-utils": "*"
 	}
 }

@@ -95,7 +95,10 @@ public class ChristeningBottleEntity extends ThrowableItemProjectile {
 		BlockState helmState = world.getBlockState(helmPos);
 		Direction helmFacing = helmState.getValue(HelmBlock.FACING);
 
-		DetectionResult result = FloodFillDetector.detect(world, helmPos);
+		// What this particular helm can hold together, not what the mod can: a plain helm is rated
+		// for a boat, and Tonnage is what buys a ship.
+		int capacity = justfatlard.big_boats.block.HelmBlock.capacityAt(world, helmPos);
+		DetectionResult result = FloodFillDetector.detect(world, helmPos, capacity);
 
 		if (!(result instanceof DetectionResult.Success success)) {
 			String reason = result instanceof DetectionResult.Failure failure
@@ -240,6 +243,7 @@ public class ChristeningBottleEntity extends ThrowableItemProjectile {
 			result.blocks(),
 			helmFacing
 		);
+		ship.setCapacity(justfatlard.big_boats.block.HelmBlock.capacityAt(world, helmPos));
 
 		// Transfer custom name from christening bottle to ship
 		ItemStack bottleStack = this.getItem();

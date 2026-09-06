@@ -33,6 +33,23 @@ dependencies {
 		compileOnly files(villageQuestsJar)
 	}
 
+	// Optional: chest-utils integration, on the same terms. A ship carries painted chests across
+	// the water and has to hand their paint on at the far end; see integration/DyedChestPaint.
+	def chestUtilsProperties = file("../chest-utils/gradle.properties")
+	if (chestUtilsProperties.exists()) {
+		def chestUtilsVersion = new Properties().with {
+			chestUtilsProperties.withInputStream { load(it) }
+			getProperty("mod_version")
+		}
+		def chestUtilsJar = file("../chest-utils/build/libs/chest-utils-${chestUtilsVersion}.jar")
+		if (!chestUtilsJar.exists()) {
+			throw new GradleException("chest-utils ${chestUtilsVersion} is not built. Run" +
+				" `mc-build chest-utils` (or ./gradlew build in ../chest-utils) first -" +
+				" this mod compiles against its API.")
+		}
+		compileOnly files(chestUtilsJar)
+	}
+
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
@@ -87,6 +104,10 @@ java {
 jar {
 	from("LICENSE") {
 		rename { "${it}_${project.base.archivesName.get()}" }
+	}
+	// The readme rides in the jar beside the licence, so a server can show it in-game.
+	from("README.md") {
+		rename { "README_${project.base.archivesName.get()}.md" }
 	}
 }
 

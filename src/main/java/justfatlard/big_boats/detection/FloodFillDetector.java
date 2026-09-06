@@ -7,6 +7,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.shapes.BooleanOp;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -33,7 +36,11 @@ public class FloodFillDetector {
 	 * @param helmPos The starting position (helm block)
 	 * @return DetectionResult containing all connected blocks or an error
 	 */
-	public static DetectionResult detect(Level world, BlockPos helmPos) {
+	/**
+	 * @param maxBlocks what the helm at {@code helmPos} is rated to hold together; see
+	 *                  {@code ShipConfig.capacityForTonnage}
+	 */
+	public static DetectionResult detect(Level world, BlockPos helmPos, int maxBlocks) {
 		List<ShipBlock> blocks = new ArrayList<>();
 		Set<BlockPos> visited = new HashSet<>();
 		Queue<BlockPos> queue = new ArrayDeque<>();
@@ -41,7 +48,7 @@ public class FloodFillDetector {
 		visited.add(helmPos);
 		queue.add(helmPos);
 
-		while (!queue.isEmpty() && blocks.size() < ShipConfig.MAX_BLOCKS) {
+		while (!queue.isEmpty() && blocks.size() < maxBlocks) {
 			BlockPos pos = queue.poll();
 
 			// Skip positions in unloaded chunks: getBlockState returns air there,
@@ -77,8 +84,8 @@ public class FloodFillDetector {
 		}
 
 		// If we hit the block limit with unexplored territory, the structure exceeds max size
-		if (blocks.size() >= ShipConfig.MAX_BLOCKS && !queue.isEmpty()) {
-			return new DetectionResult.TooLarge();
+		if (blocks.size() >= maxBlocks && !queue.isEmpty()) {
+			return new DetectionResult.TooLarge(maxBlocks);
 		}
 
 		LOGGER.debug("Detected ship: {} blocks from helm at {}", blocks.size(), helmPos);
@@ -99,16 +106,22 @@ public class FloodFillDetector {
 	public static GroundingResult detectGrounding(Level world, Set<BlockPos> shipPositions, int currentShipSize, BlockPos referencePos) {
 		int availableCapacity = ShipConfig.MAX_BLOCKS - currentShipSize;
 
-		// Find all solid blocks adjacent to the ship that aren't part of the ship
+		// Find all solid blocks the ship actually touches that aren't part of the ship.
+		//
+		// Sharing a face is not the same as touching: a bottom slab and the top slab beside it
+		// are neighbours whose shapes never meet, and so is anything sitting a block above a
+		// bottom slab. Those read as clear water to the eye and used to read as land to the ship,
+		// so the two shapes are asked whether they share any area across the face between them.
 		Set<BlockPos> adjacentSolids = new HashSet<>();
 		for (BlockPos shipPos : shipPositions) {
+			VoxelShape ours = world.getBlockState(shipPos).getShape(world, shipPos);
 			for (Direction direction : Direction.values()) {
 				BlockPos adjacent = shipPos.relative(direction);
-				if (!shipPositions.contains(adjacent)) {
-					BlockState state = world.getBlockState(adjacent);
-					if (ShipBlockUtils.isShipEligible(state)) {
-						adjacentSolids.add(adjacent);
-					}
+				if (shipPositions.contains(adjacent)) continue;
+				BlockState state = world.getBlockState(adjacent);
+				if (!ShipBlockUtils.isShipEligible(state)) continue;
+				if (touches(ours, direction, state.getShape(world, adjacent))) {
+					adjacentSolids.add(adjacent);
 				}
 			}
 		}
@@ -166,6 +179,14 @@ public class FloodFillDetector {
 		}
 
 		return new GroundingResult.FreeFloating();
+	}
+
+	/**
+	 * Whether two shapes on either side of a face meet across it with some area, not just an
+	 * edge or a corner. An empty face - a bottom slab's top - meets nothing.
+	 */
+	private static boolean touches(VoxelShape ours, Direction toward, VoxelShape theirs) {
+		return Shapes.joinIsNotEmpty(ours.getFaceShape(toward), theirs.getFaceShape(toward.getOpposite()), BooleanOp.AND);
 	}
 
 	/**
