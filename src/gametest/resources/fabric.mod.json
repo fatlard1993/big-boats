@@ -1,0 +1,18 @@
+{
+	"schemaVersion": 1,
+	"id": "big-boats-gametest",
+	"version": "1.0.0",
+	"name": "Big Boats game tests",
+	"description": "The pictures for the readme and the mod page.",
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"fabric-client-gametest": [
+			"justfatlard.big_boats.gametest.Showcase"
+		]
+	},
+	"depends": {
+		"big-boats-justfatlard": "*",
+		"fabric-client-gametest-api-v1": "*"
+	}
+}

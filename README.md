@@ -2,6 +2,11 @@
 
 A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any structure, add a helm, christen it, and sail away.
 
+## Screenshots
+
+![A ship built out of blocks, riding at anchor: hull, mast, sail and the wheel on its raised stern](ship.png)
+![The same ship christened and under way, with somebody at the wheel](sailing.png)
+
 ## Features
 
 ### Ship Building

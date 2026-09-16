@@ -118,3 +118,15 @@ publishing {
 		}
 	}
 }
+
+// src/gametest: the showcase pictures for the readme and the mod page. It opens a window:
+// run it under xvfb-run.
+fabricApi {
+	configureTests {
+		createSourceSet = true
+		modId = "big-boats-gametest"
+		enableGameTests = false
+		enableClientGameTests = true
+		eula = true
+	}
+}
