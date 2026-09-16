@@ -27,7 +27,7 @@
 		"fabric-api": "${fabricApiVersion}",
 		"minecraft": "${minecraftDependency}",
 		"java": ">=25",
-		"pandorical": "*"
+		"pandorical": ">=1.3.10"
 	},
 	"suggests": {
 		"village-quests-justfatlard": "*",
