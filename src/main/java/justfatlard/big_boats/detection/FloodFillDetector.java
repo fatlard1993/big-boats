@@ -48,7 +48,12 @@ public class FloodFillDetector {
 		visited.add(helmPos);
 		queue.add(helmPos);
 
-		while (!queue.isEmpty() && blocks.size() < maxBlocks) {
+		// Counted on past what the helm holds, only so a refusal can say by how much: blocks beyond
+		// the capacity are counted but never built into ShipBlocks. Too large means more blocks than
+		// the capacity, not a queue left over - the queue always ends holding the air round the hull,
+		// so a ship of exactly the size its helm holds would read as too big.
+		int found = 0;
+		while (!queue.isEmpty() && found <= ShipConfig.SIZE_REPORT_LIMIT) {
 			BlockPos pos = queue.poll();
 
 			// Skip positions in unloaded chunks: getBlockState returns air there,
@@ -63,7 +68,10 @@ public class FloodFillDetector {
 				continue;
 			}
 
-			blocks.add(ShipBlock.fromWorld(world, pos, helmPos));
+			found++;
+			if (found <= maxBlocks) {
+				blocks.add(ShipBlock.fromWorld(world, pos, helmPos));
+			}
 
 			// Mark adjacent positions visited at enqueue time to prevent queue pollution
 			for (Direction direction : Direction.values()) {
@@ -83,9 +91,8 @@ public class FloodFillDetector {
 			return new DetectionResult.TooSmall(blocks.size(), ShipConfig.MIN_BLOCKS);
 		}
 
-		// If we hit the block limit with unexplored territory, the structure exceeds max size
-		if (blocks.size() >= maxBlocks && !queue.isEmpty()) {
-			return new DetectionResult.TooLarge(maxBlocks);
+		if (found > maxBlocks) {
+			return new DetectionResult.TooLarge(maxBlocks, found);
 		}
 
 		LOGGER.debug("Detected ship: {} blocks from helm at {}", blocks.size(), helmPos);
@@ -190,29 +197,43 @@ public class FloodFillDetector {
 	}
 
 	/**
+	 * What a search for one block turned up: the block, or nothing - and if nothing, whether the
+	 * structure ran out or the search did.
+	 */
+	public record Search(BlockPos found, boolean gaveUp) {}
+
+	/**
 	 * BFS through connected boatable blocks to find one matching the predicate.
+	 *
+	 * <p>Bounded by the blocks walked rather than the positions looked at, and as far as a ship is
+	 * ever counted: the air round a big hull outnumbers its blocks, so a bound on positions gives up
+	 * short of a helm the size count would reach, and a bottle thrown at the far end of a ship too
+	 * big for its helm would be told there is no helm.
 	 *
 	 * @param world The world to search in
 	 * @param startPos Starting position for the search
 	 * @param predicate Test applied to each block's state
-	 * @return The position of the first matching block, or null if not found
 	 */
-	public static BlockPos findBlock(Level world, BlockPos startPos, Predicate<BlockState> predicate) {
+	public static Search findBlock(Level world, BlockPos startPos, Predicate<BlockState> predicate) {
 		Queue<BlockPos> queue = new ArrayDeque<>();
 		Set<BlockPos> visited = new HashSet<>();
 		visited.add(startPos);
 		queue.add(startPos);
+		int walked = 0;
 
-		while (!queue.isEmpty() && visited.size() < ShipConfig.MAX_BLOCKS) {
+		while (!queue.isEmpty()) {
 			BlockPos pos = queue.poll();
 
 			BlockState state = world.getBlockState(pos);
 
 			if (predicate.test(state)) {
-				return pos;
+				return new Search(pos, false);
 			}
 
 			if (ShipBlockUtils.isShipEligible(state)) {
+				if (++walked > ShipConfig.SIZE_REPORT_LIMIT) {
+					return new Search(null, true);
+				}
 				for (Direction dir : Direction.values()) {
 					BlockPos neighbor = pos.relative(dir);
 					if (!visited.contains(neighbor)) {
@@ -223,6 +244,6 @@ public class FloodFillDetector {
 			}
 		}
 
-		return null;
+		return new Search(null, false);
 	}
 }

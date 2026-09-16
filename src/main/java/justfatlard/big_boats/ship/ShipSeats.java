@@ -7,7 +7,6 @@ import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import justfatlard.big_boats.util.ShipBlockUtils;
 import justfatlard.pandorical.api.PandoricalApi;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -63,11 +62,7 @@ public final class ShipSeats {
 	 * current heading every tick rather than being a world position that would have to be chased.
 	 */
 	public void take(Cushion cushion, ShipPose pose) {
-		Vec3 world = cushion.position();
-		Vec3 local = ShipBlockUtils.rotateXZ(
-			world.x - pose.helmX(), world.z - pose.helmZ(), -pose.yawRadians());
-
-		seats.add(new Seat(cushion, new Vec3(local.x, world.y - pose.helmY(), local.z)));
+		seats.add(new Seat(cushion, pose.toLocalPoint(cushion.position())));
 		CARRIED.add(cushion.getUUID());
 	}
 
@@ -91,12 +86,8 @@ public final class ShipSeats {
 				CARRIED.remove(seat.cushion().getUUID());
 				return true;
 			}
-			Vec3 rotated = ShipBlockUtils.rotateXZ(
-				seat.localOffset().x, seat.localOffset().z, pose.yawRadians());
-			seat.cushion().setPos(
-				pose.helmX() + rotated.x,
-				pose.helmY() + seat.localOffset().y,
-				pose.helmZ() + rotated.z);
+			Vec3 world = pose.toWorldPoint(seat.localOffset());
+			seat.cushion().setPos(world.x, world.y, world.z);
 			// Vanilla never expects a cushion to move, so its tracker never sends where one is:
 			// an update interval of never, deltas off. Moved silently, a cushion stayed on the
 			// client wherever the ship set sail from, and whoever sat on it stayed with it while

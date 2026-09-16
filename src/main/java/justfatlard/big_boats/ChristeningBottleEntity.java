@@ -85,10 +85,15 @@ public class ChristeningBottleEntity extends ThrowableItemProjectile {
 			return;
 		}
 
-		BlockPos helmPos = findHelmInStructure(world, targetPos);
+		FloodFillDetector.Search helmSearch = findHelmInStructure(world, targetPos);
+		BlockPos helmPos = helmSearch.found();
 
 		if (helmPos == null) {
-			failChristening(serverWorld, targetPos, "No helm block found - build a ship with a helm!");
+			// A search that gave up was walking something bigger than any ship is ever counted, so
+			// whatever helm is in there, the answer is the same.
+			failChristening(serverWorld, targetPos, helmSearch.gaveUp()
+				? new DetectionResult.TooLarge(ShipConfig.MAX_BLOCKS, ShipConfig.SIZE_REPORT_LIMIT + 1).message()
+				: "No helm block found - build a ship with a helm!");
 			return;
 		}
 
@@ -137,14 +142,14 @@ public class ChristeningBottleEntity extends ThrowableItemProjectile {
 	 * Searches for a helm block by BFS through connected ship-eligible blocks.
 	 * This allows hitting any part of the ship structure to christen it.
 	 */
-	private BlockPos findHelmInStructure(Level world, BlockPos pos) {
+	private FloodFillDetector.Search findHelmInStructure(Level world, BlockPos pos) {
 		if (pos == null) {
-			return null;
+			return new FloodFillDetector.Search(null, false);
 		}
 
 		BlockState hitState = world.getBlockState(pos);
 		if (hitState.getBlock() instanceof HelmBlock) {
-			return pos;
+			return new FloodFillDetector.Search(pos, false);
 		}
 
 		// If hit block isn't a valid ship block, check adjacent positions for a starting point
@@ -156,7 +161,7 @@ public class ChristeningBottleEntity extends ThrowableItemProjectile {
 				BlockPos adjacent = pos.relative(dir);
 				BlockState adjacentState = world.getBlockState(adjacent);
 				if (adjacentState.getBlock() instanceof HelmBlock) {
-					return adjacent;
+					return new FloodFillDetector.Search(adjacent, false);
 				}
 				if (ShipBlockUtils.isShipEligible(adjacentState)) {
 					startPos = adjacent;
@@ -166,7 +171,7 @@ public class ChristeningBottleEntity extends ThrowableItemProjectile {
 		}
 
 		if (startPos == null) {
-			return null;
+			return new FloodFillDetector.Search(null, false);
 		}
 
 		return FloodFillDetector.findBlock(world, startPos, state -> state.getBlock() instanceof HelmBlock);

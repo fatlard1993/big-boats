@@ -15,12 +15,11 @@ import net.minecraft.world.phys.Vec3;
  * <h2>Coordinate transform implementations</h2>
  * The codebase has three rotation paths, each serving a distinct purpose:
  * <ol>
- *   <li>{@link ShipPose#toWorld}: continuous rotation for collision, lighting, and display
- *       during sailing. Delegates to {@link RelativeBlockPos#rotateY}. This is also the
- *       rotation the client-rendered structure uses ({@code StructurePose} poses the
- *       structure origin at (helmX, helmY, helmZ, yawDegrees) and rotates each block's
- *       unmodified integer {@code RelPos} the same way), so the rendered structure and
- *       the physics/collision hull stay consistent.</li>
+ *   <li>{@link ShipPose#toWorld}: continuous rotation of a block's corner, for collision,
+ *       lighting and interaction during sailing; each adds the unrotated half block that makes
+ *       it the block's centre. Delegates to {@link RelativeBlockPos#rotateY}. Points that are
+ *       not blocks go through {@link #toWorldPoint}, and the rendered structure is posed at
+ *       {@link #renderOrigin}, so all of them turn about the helm block's centre.</li>
  *   <li>{@link ShipPose#toWorldBlockPos} / {@link ShipBlockUtils#relativeToWorld}: snapped
  *       (90-degree) integer rotation for block placement during dock/undock.</li>
  *   <li>{@link RelativeBlockPos#rotateY}: raw continuous rotation returning Vec3.</li>
@@ -45,6 +44,36 @@ public record ShipPose(double helmX, double helmY, double helmZ, float yawRadian
 	 */
 	public BlockPos toWorldBlockPos(RelativeBlockPos relPos, int cos, int sin) {
 		return ShipBlockUtils.relativeToWorld(relPos, helmX, helmY, helmZ, cos, sin);
+	}
+
+	/**
+	 * Ship-local point to world, turning about the helm block's centre.
+	 *
+	 * <p>In the local frame block {@code r} fills {@code [r, r+1)}, so its centre {@code r + 0.5}
+	 * lands on {@code helm + R·r + 0.5}: the cell docking places it in, and where its collision
+	 * sits. Anything aboard that is not a block - a cushion, someone standing on the deck - has to
+	 * turn about that same point, or a quarter turn leaves it a block away from the deck it was on.
+	 */
+	public Vec3 toWorldPoint(Vec3 local) {
+		Vec3 turned = ShipBlockUtils.rotateXZ(local.x - 0.5, local.z - 0.5, yawRadians);
+		return new Vec3(helmX + 0.5 + turned.x, helmY + local.y, helmZ + 0.5 + turned.z);
+	}
+
+	/** Inverse of {@link #toWorldPoint}. */
+	public Vec3 toLocalPoint(Vec3 world) {
+		Vec3 turned = ShipBlockUtils.rotateXZ(world.x - helmX - 0.5, world.z - helmZ - 0.5, -yawRadians);
+		return new Vec3(turned.x + 0.5, world.y - helmY, turned.z + 0.5);
+	}
+
+	/**
+	 * Where to put the rendered structure's origin so it turns about the helm block's centre too.
+	 *
+	 * <p>The structure renderer rotates each block's model about the origin itself, which is a
+	 * corner; posed at the helm corner, a ship heading east was drawn a block to one side of its
+	 * own collision, its pilot and the cells it docks into.
+	 */
+	public Vec3 renderOrigin() {
+		return toWorldPoint(Vec3.ZERO);
 	}
 
 	/**

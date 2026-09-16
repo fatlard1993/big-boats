@@ -66,7 +66,7 @@ public class ShipLighting {
 
 		for (LightSource source : lightSources) {
 			Vec3 worldPos = pose.toWorld(source.relativePos());
-			BlockPos lightPos = BlockPos.containing(worldPos.x, worldPos.y, worldPos.z);
+			BlockPos lightPos = BlockPos.containing(worldPos.x + 0.5, worldPos.y + 0.5, worldPos.z + 0.5);
 
 			if (world.getBlockState(lightPos).isAir()) {
 				BlockState lightBlock = Blocks.LIGHT.defaultBlockState()
@@ -91,7 +91,7 @@ public class ShipLighting {
 		Set<BlockPos> newPositions = new HashSet<>();
 		for (LightSource source : lightSources) {
 			Vec3 worldPos = pose.toWorld(source.relativePos());
-			BlockPos lightPos = BlockPos.containing(worldPos.x, worldPos.y, worldPos.z);
+			BlockPos lightPos = BlockPos.containing(worldPos.x + 0.5, worldPos.y + 0.5, worldPos.z + 0.5);
 
 			BlockState existing = world.getBlockState(lightPos);
 			BlockState wanted = Blocks.LIGHT.defaultBlockState()

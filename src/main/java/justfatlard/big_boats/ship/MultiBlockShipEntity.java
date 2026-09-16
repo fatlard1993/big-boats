@@ -63,8 +63,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Ships are plain server {@link Entity} instances registered with Pandorical's
  * {@code "invisible"} renderer ({@link BigBoats#onInitialize}), so the entity draws
- * nothing. {@link ShipStructure} renders the blocks, posed at (helmX, helmY, helmZ,
- * yawDegrees). Camera pull-back while piloting is pushed via
+ * nothing. {@link ShipStructure} renders the blocks, posed at {@link ShipPose#renderOrigin}
+ * so they turn about the helm block's centre. Camera pull-back while piloting is pushed via
  * {@link PandoricalApi#camera()} on mount/dismount. Delegates receive a
  * {@link ShipPose} to transform ship-local coordinates to world coordinates.
  */
@@ -123,6 +123,9 @@ public class MultiBlockShipEntity extends Entity {
 
 	// The direction the helm faces (where the wheel is visible from)
 	private Direction helmFacing = Direction.NORTH;
+
+	/** The pilot whose dismount is docking the ship, while it docks; see {@link ShipRiders#settle}. */
+	private Entity steppingOff;
 
 	// Ship rotation in radians (converted to/from degrees only at serialization boundaries).
 	// Volatile: read by writeCustomData on chunk-saving thread.
@@ -223,6 +226,9 @@ public class MultiBlockShipEntity extends Entity {
 		lighting.remove(world);
 		physics.reset();
 
+		// The frame everyone aboard is standing in, before the hull snaps out from under them.
+		ShipPose adrift = pose();
+
 		// Snap rotation and position to block grid
 		float yawDegrees = (float) Math.toDegrees(yawRadians);
 		ShipBlockUtils.SnappedRotation snap = ShipBlockUtils.snappedRotation(yawDegrees);
@@ -230,10 +236,25 @@ public class MultiBlockShipEntity extends Entity {
 		this.setYRot(snap.yawDegrees());
 		helmX = Math.round(helmX);
 		helmZ = Math.round(helmZ);
+		// Height too: blocks go down at the floor of it, and a hull easing back to its waterline
+		// can stop a hair under, which would put every block a storey below the deck its cushions
+		// and passengers were carried on.
+		this.setPos(this.getX(), Math.round(this.getY()), this.getZ());
+		ShipPose moored = pose();
+
+		// The anchor follows the helm to its snapped seat, so the next voyage starts from it.
+		Vec3 mooredSeat = computeSeatWorldPos();
+		this.setPos(mooredSeat.x, this.getY(), mooredSeat.z);
+
+		// Everyone standing on the deck - the pilot who just stepped off the helm among them -
+		// goes where the snap took the boards under their feet. The snap is up to half a block
+		// and forty-five degrees, and a rider left where they were stood in a wall or over the
+		// side, and slid about as the hull placed itself around them.
+		riders.settle(world, this, blocks, adrift, moored, this.getBoundingBox().inflate(hullReach()), steppingOff);
 
 		// Before the cushions are released: the last sailing tick already put them over the hull,
 		// and the deck they were floating above is about to become blocks again underneath them.
-		seats.updatePositions(pose());
+		seats.updatePositions(moored);
 		seats.release();
 
 		ShipDocking.DockStats stats = docking.placeBlocks(world, blocks, helmX, this.getY(), helmZ, snap);
@@ -662,7 +683,12 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		if (state == ShipState.SAILING && this.getPassengers().isEmpty() && !this.level().isClientSide()) {
-			dock();
+			steppingOff = passenger;
+			try {
+				dock();
+			} finally {
+				steppingOff = null;
+			}
 		}
 	}
 
@@ -771,8 +797,8 @@ public class MultiBlockShipEntity extends Entity {
 			physics.applyAcceleration(forward, helmFacing, yawRadians);
 		}
 
-		physics.applyDrag();
-		physics.clampToMaxSpeed();
+		physics.applyDrag(helmFacing, yawRadians);
+		physics.clampToMaxSpeed(helmFacing, yawRadians);
 		physics.stopIfSlow();
 
 		// Apply velocity with collision checks (terrain + ship-to-ship)
@@ -851,7 +877,9 @@ public class MultiBlockShipEntity extends Entity {
 		// WILL be is what makes them arrive where it IS.
 		ShipPose leadPose = leadBy(entryPose, tickPose, ShipConfig.CLIENT_INTERP_TICKS);
 		collisionEntities.tickUpdate(leadPose);
-		seats.updatePositions(leadPose);
+		// Not ahead: a cushion blends the way the deck blends, so where the deck is sent is
+		// where the cushion is drawn on it.
+		seats.updatePositions(tickPose);
 
 		// After the collision entities, so anything standing on the deck is being carried toward
 		// hull that has already arrived rather than hull it would fall through.

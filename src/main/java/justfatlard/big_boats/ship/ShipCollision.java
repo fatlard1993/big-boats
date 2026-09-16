@@ -5,9 +5,11 @@ import justfatlard.big_boats.util.ShipBlockUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -26,8 +28,8 @@ public class ShipCollision {
 
 	private static final int[][] NEIGHBOR_OFFSETS = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 
-	// Sample offsets for collision checking: corners of each hull block's volume.
-	// 0.49 instead of 0.5 to avoid sampling exactly on block boundaries where
+	// Sample offsets for collision checking, from each hull block's centre to the corners of its
+	// volume. 0.49 instead of 0.5 to avoid sampling exactly on block boundaries where
 	// floating-point edge cases cause false positives from adjacent blocks.
 	// Two offsets per axis (2x2x2 = 8 samples) catches all block positions a
 	// hull block can overlap. The center (0) is redundant; corner samples always
@@ -79,7 +81,10 @@ public class ShipCollision {
 		Set<BlockPos> positions = new HashSet<>();
 
 		for (RelativeBlockPos hullPos : hullBlocks) {
-			Vec3 worldPos = pose.toWorld(hullPos);
+			// toWorld is the block's corner; the samples go around its centre. Taken around the
+			// corner they reached a block past the hull to the north, west and below, so a ship
+			// stopped short of a jetty on those sides and scraped a seabed it was clear of.
+			Vec3 worldPos = pose.toWorld(hullPos).add(0.5, 0.5, 0.5);
 
 			for (double ox : SAMPLE_OFFSETS) {
 				for (double oy : SAMPLE_OFFSETS) {
@@ -98,7 +103,8 @@ public class ShipCollision {
 
 	/**
 	 * Checks if moving the ship would collide with world terrain. Fragile blocks
-	 * (plants, kelp, cobwebs, etc.) are broken and dropped instead of blocking movement.
+	 * (plants, kelp, cobwebs, etc.) and loose terrain ({@link ShipBlockUtils#isKnockedLooseByShip})
+	 * are broken and dropped instead of blocking movement, whether or not something else stops it.
 	 *
 	 * @return true if collision detected (movement blocked), false if path is clear
 	 */
@@ -109,6 +115,8 @@ public class ShipCollision {
 			pose.helmZ() + deltaZ, pose.yawRadians());
 
 		Set<BlockPos> positionsToCheck = gatherCollisionPositions(movedPose);
+		List<BlockPos> toBreak = new ArrayList<>();
+		boolean blocked = false;
 
 		for (BlockPos pos : positionsToCheck) {
 			if (!world.isLoaded(pos)) {
@@ -117,18 +125,28 @@ public class ShipCollision {
 
 			BlockState worldBlock = world.getBlockState(pos);
 
-			if (worldBlock.isAir() || worldBlock.liquid()) {
+			// Light blocks are passed through, not broken: the ship's own lights stand inside its
+			// hull, and breaking them on every move played a block breaking over and over while
+			// the lighting put them straight back.
+			if (worldBlock.isAir() || worldBlock.liquid() || worldBlock.is(Blocks.LIGHT)) {
 				continue;
 			}
 
-			if (ShipBlockUtils.isBreakableByShip(worldBlock) && world instanceof ServerLevel) {
-				world.destroyBlock(pos, true, null, 512);
+			if (ShipBlockUtils.isBreakableByShip(worldBlock)
+					|| ShipBlockUtils.isKnockedLooseByShip(world, pos, worldBlock)) {
+				toBreak.add(pos);
 				continue;
 			}
 
-			return true;
+			blocked = true;
 		}
-		return false;
+
+		// Broken only once every block has been judged against the world as it was, so knocking
+		// one loose cannot loosen the next in the same move and let a hull chew through a reef.
+		if (world instanceof ServerLevel) {
+			for (BlockPos pos : toBreak) world.destroyBlock(pos, true, null, 512);
+		}
+		return blocked;
 	}
 
 	/**
@@ -148,7 +166,8 @@ public class ShipCollision {
 
 			BlockState worldBlock = world.getBlockState(pos);
 
-			if (worldBlock.isAir() || worldBlock.liquid() || ShipBlockUtils.isBreakableByShip(worldBlock)) {
+			if (worldBlock.isAir() || worldBlock.liquid() || ShipBlockUtils.isBreakableByShip(worldBlock)
+					|| ShipBlockUtils.isKnockedLooseByShip(world, pos, worldBlock)) {
 				continue;
 			}
 

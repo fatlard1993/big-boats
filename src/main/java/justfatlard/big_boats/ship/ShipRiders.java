@@ -8,7 +8,8 @@ import java.util.Set;
 import java.util.UUID;
 import justfatlard.big_boats.util.PlayerInputStorage;
 import justfatlard.big_boats.util.RelativeBlockPos;
-import justfatlard.big_boats.util.ShipBlockUtils;
+import justfatlard.pandorical.api.Capabilities;
+import justfatlard.pandorical.api.PandoricalApi;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ServerLevel;
@@ -38,8 +39,17 @@ import net.minecraft.world.phys.Vec3;
  * it was already doing. It is the one channel that moves a player without taking control away from
  * them. Anything that is not a player is positioned outright, since for those the server's word is
  * final.
+ *
+ * <p>All of that is the fallback. A Pandorical client that walks structures carries its own player
+ * across the deck it draws, in step with it frame by frame, which velocity sent from here never
+ * was; such a player is left entirely to their client ({@link #walksDecks}).
  */
 public final class ShipRiders {
+
+	/** Whether this player's client stands on and rides a sailing ship by itself. */
+	public static boolean walksDecks(ServerPlayer player) {
+		return PandoricalApi.hasCapability(player, Capabilities.WALKABLE_STRUCTURES);
+	}
 
 	/** How far below its feet an entity may find deck and still count as standing on it. */
 	private static final double SUPPORT_REACH = 1.2;
@@ -106,6 +116,7 @@ public final class ShipRiders {
 			// ship, a seated player by their cushion - and moving it again would double the trip.
 			if (rider.getVehicle() != null) continue;
 			if (ship.ownsChildEntity(rider)) continue;
+			if (rider instanceof ServerPlayer player && walksDecks(player)) continue;
 
 			UUID id = rider.getUUID();
 			Carried state = riders.get(id);
@@ -147,6 +158,49 @@ public final class ShipRiders {
 		}
 
 		riders.keySet().retainAll(aboard);
+	}
+
+	/**
+	 * Move everyone standing on the deck by a snap the hull just made, once and outright.
+	 *
+	 * <p>Docking is the one move that is not a tick of travel: the hull jumps to the block grid
+	 * and turns to a cardinal, and nobody aboard is carried through it by velocity. A teleport
+	 * is fine here, where it is not while sailing - the pause it puts on a player's own movement
+	 * lasts one round trip, and the ship has stopped.
+	 *
+	 * @param pilot the player stepping off the helm, if that is what docked it. Their position is
+	 *              the server's, set by the seat they just left, so the server moves them even when
+	 *              their client walks decks.
+	 */
+	public void settle(ServerLevel world, MultiBlockShipEntity ship, List<ShipBlock> blocks,
+					   ShipPose from, ShipPose to, AABB searchBox, Entity pilot) {
+		riders.clear();
+		if (!moved(from, to)) return;
+
+		indexBlocks(blocks);
+		if (occupied.isEmpty()) return;
+
+		float turn = Mth.wrapDegrees((float) Math.toDegrees(to.yawRadians() - from.yawRadians()));
+
+		for (Entity rider : world.getEntities(ship, searchBox, ShipRiders::couldRide)) {
+			if (rider.getVehicle() != null) continue;
+			if (ship.ownsChildEntity(rider)) continue;
+			// Their client moves them through the snap, from the deck it drew.
+			if (rider != pilot && rider instanceof ServerPlayer player && walksDecks(player)) continue;
+
+			Vec3 position = rider.position();
+			Vec3 local = toLocal(position, from);
+			if (!hasDeckBeneath(local, AIRBORNE_REACH)) continue;
+
+			Vec3 target = toWorld(local, to);
+			if (rider instanceof ServerPlayer player) {
+				player.teleportTo(world, target.x, target.y, target.z, Set.of(),
+					player.getYRot() + turn, player.getXRot(), false);
+			} else {
+				rider.setPos(target.x, target.y, target.z);
+				rider.setYRot(rider.getYRot() + turn);
+			}
+		}
 	}
 
 	private void carryPlayer(ServerPlayer player, Carried state, Vec3 position, Vec3 delta,
@@ -209,14 +263,11 @@ public final class ShipRiders {
 	}
 
 	private Vec3 toLocal(Vec3 worldPos, ShipPose pose) {
-		Vec3 flat = ShipBlockUtils.rotateXZ(
-			worldPos.x - pose.helmX(), worldPos.z - pose.helmZ(), -pose.yawRadians());
-		return new Vec3(flat.x, worldPos.y - pose.helmY(), flat.z);
+		return pose.toLocalPoint(worldPos);
 	}
 
 	private Vec3 toWorld(Vec3 local, ShipPose pose) {
-		Vec3 flat = ShipBlockUtils.rotateXZ(local.x, local.z, pose.yawRadians());
-		return new Vec3(pose.helmX() + flat.x, pose.helmY() + local.y, pose.helmZ() + flat.z);
+		return pose.toWorldPoint(local);
 	}
 
 	/**

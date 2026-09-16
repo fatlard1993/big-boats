@@ -2,7 +2,12 @@ package justfatlard.big_boats.util;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.LevelReader;
+import net.minecraft.world.level.block.BaseCoralPlantTypeBlock;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.FlowerBlock;
 import net.minecraft.world.level.block.KelpBlock;
@@ -10,6 +15,7 @@ import net.minecraft.world.level.block.KelpPlantBlock;
 import net.minecraft.world.level.block.LightBlock;
 import net.minecraft.world.level.block.LilyPadBlock;
 import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.SeaPickleBlock;
 import net.minecraft.world.level.block.SeagrassBlock;
 import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.SugarCaneBlock;
@@ -50,6 +56,58 @@ public final class ShipBlockUtils {
 
 		// Also break replaceable non-air blocks (tall grass, ferns, etc.)
 		return state.canBeReplaced() && !state.isAir();
+	}
+
+	/**
+	 * Most solid neighbours a block of natural terrain can have and still be knocked loose by a
+	 * hull: a spur of reef, a lone rock on the seabed, the corner of a ledge.
+	 */
+	public static final int LOOSE_AT_MOST_SUPPORTS = 2;
+
+	/**
+	 * Whether a sailing hull clears this block from its path rather than stopping at it: coral
+	 * growing on the reef, and natural terrain held on by no more than
+	 * {@link #LOOSE_AT_MOST_SUPPORTS} faces.
+	 *
+	 * <p>Only natural terrain, because the rule cannot tell a spur of reef from the end of a jetty,
+	 * and a ship should not take out a pier post by bumping it. Kept out of
+	 * {@link #isBreakableByShip}, which also decides what a ship can be built from, so a coral
+	 * fan or a sea pickle on deck is still part of the ship.
+	 *
+	 * <p>Support is counted on the world as it stands; a caller breaking several blocks in one
+	 * move should decide all of them before breaking any, or one broken block loosens the next.
+	 */
+	public static boolean isKnockedLooseByShip(BlockGetter world, BlockPos pos, BlockState state) {
+		Block block = state.getBlock();
+		if (block instanceof BaseCoralPlantTypeBlock || block instanceof SeaPickleBlock) return true;
+		if (!isNaturalTerrain(state)) return false;
+
+		int supports = 0;
+		for (Direction side : Direction.values()) {
+			BlockPos neighbourPos = pos.relative(side);
+			// Unloaded reads as air; a neighbour nobody can see is not evidence of a spur.
+			if (world instanceof LevelReader reader && !reader.hasChunkAt(neighbourPos)) {
+				if (++supports > LOOSE_AT_MOST_SUPPORTS) return false;
+				continue;
+			}
+			BlockState neighbour = world.getBlockState(neighbourPos);
+			if (neighbour.isAir() || neighbour.liquid() || isBreakableByShip(neighbour)
+					|| neighbour.getCollisionShape(world, neighbourPos).isEmpty()) {
+				continue;
+			}
+			if (++supports > LOOSE_AT_MOST_SUPPORTS) return false;
+		}
+		return true;
+	}
+
+	private static boolean isNaturalTerrain(BlockState state) {
+		return state.is(BlockTags.CORAL_BLOCKS)
+			|| state.is(Blocks.DEAD_TUBE_CORAL_BLOCK) || state.is(Blocks.DEAD_BRAIN_CORAL_BLOCK)
+			|| state.is(Blocks.DEAD_BUBBLE_CORAL_BLOCK) || state.is(Blocks.DEAD_FIRE_CORAL_BLOCK)
+			|| state.is(Blocks.DEAD_HORN_CORAL_BLOCK)
+			|| state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(BlockTags.SUBSTRATE_OVERWORLD)
+			|| state.is(BlockTags.SAND) || state.is(Blocks.GRAVEL) || state.is(Blocks.CLAY)
+			|| state.is(Blocks.SANDSTONE) || state.is(Blocks.RED_SANDSTONE) || state.is(Blocks.MAGMA_BLOCK);
 	}
 
 	/**

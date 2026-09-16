@@ -18,5 +18,6 @@
   "big-boats.command.cleanup_lights": "Removed %d orphaned light block(s) in %d-block radius",
   "big-boats.ship.occupied": "Someone's already at the helm",
   "big-boats.ship.structure_damaged": "Can't undock — ship blocks are missing or broken",
-  "enchantment.big-boats-justfatlard.tonnage": "Tonnage"
+  "enchantment.big-boats-justfatlard.tonnage": "Tonnage",
+  "big-boats.christening.success.controller": "Ship launched with %d blocks! Press [use] at the helm to board."
 }

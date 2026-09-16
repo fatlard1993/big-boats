@@ -7,14 +7,36 @@ package justfatlard.big_boats.ship;
 public final class ShipConfig {
 	// --- Physics constants (tuned by feel to match vanilla boat "weight") ---
 
-	// Acceleration per tick when W is held. Low value gives ships inertia/momentum.
+	// Acceleration per tick when W is held, up to harbour speed. Low value gives ships inertia.
 	public static final double ACCELERATION = 0.008;
 
-	// Maximum speed in blocks/tick. 0.18 ≈ 3.6 blocks/sec; brisk but controllable.
-	public static final double MAX_SPEED = 0.18;
+	/**
+	 * Harbour speed, blocks/tick: 0.18 is about 3.6 blocks a second, which a ship reaches in a
+	 * second and a half and can be steered through a channel at. Reversing tops out here too.
+	 */
+	public static final double HARBOUR_SPEED = 0.18;
 
-	// Multiplied against velocity each tick. 0.98 = 2% slowdown/tick ≈ 1 second to stop from max speed.
+	/**
+	 * Past harbour speed a held throttle keeps building, this much a tick before drag, so open
+	 * water is crossed fast and a channel is not: it takes some sixteen seconds of clear water to
+	 * get from harbour speed to the top.
+	 */
+	public static final double OPEN_WATER_ACCELERATION = 0.0015;
+
+	// Top speed in blocks/tick. 0.45 is 9 blocks a second, a little past a vanilla boat.
+	public static final double MAX_SPEED = 0.45;
+
+	// Multiplied against velocity each tick with no throttle: 2% a tick, a few seconds to stop.
 	public static final double DRAG = 0.98;
+
+	// The same under throttle: light enough that speed can build, heavy enough to cap it.
+	public static final double POWERED_DRAG = 0.998;
+
+	/**
+	 * Kept of sideways speed each tick: the keel. A ship slides only a little across its heading,
+	 * so at speed a turn carves rather than drifts on the way it was going.
+	 */
+	public static final double KEEL = 0.85;
 
 	// Rotation rate: 2 degrees/tick = 40 deg/sec = full 360° in 9 seconds.
 	public static final float TURN_SPEED = (float) Math.toRadians(2.0);
@@ -25,11 +47,19 @@ public final class ShipConfig {
 	/**
 	 * The largest ship any helm can command: the Tonnage III rating.
 	 *
-	 * <p>Also the ceiling on every internal search bound, which is why it stays a plain constant
-	 * rather than becoming per-ship - those bounds are about not walking the world forever, not
-	 * about what a particular helm is rated for.
+	 * <p>Also the ceiling on every internal search bound but one, which is why it stays a plain
+	 * constant rather than becoming per-ship - those bounds are about not walking the world
+	 * forever, not about what a particular helm is rated for. The exception is
+	 * {@link #SIZE_REPORT_LIMIT}.
 	 */
 	public static final int MAX_BLOCKS = 2000;
+
+	/**
+	 * How far a ship too big for its helm is counted, so the refusal can say how big it is; past
+	 * this it is only "3000+". The one search allowed past {@link #MAX_BLOCKS}, and only ever on the
+	 * way to saying no.
+	 */
+	public static final int SIZE_REPORT_LIMIT = 3000;
 
 	/**
 	 * Ship size a helm can hold together, by Tonnage level.
@@ -75,14 +105,18 @@ public final class ShipConfig {
 	public static final int COLLISION_UPDATE_TICK_INTERVAL = 1;
 
 	/**
-	 * How long a client takes to slide an entity to where it was told it is.
+	 * How far behind its latest position a client draws a moving entity, in ticks of travel.
 	 *
-	 * <p>Vanilla interpolates entity positions over roughly this many ticks rather than snapping
-	 * them, so anything of the ship's that is an entity - its collision, its cushions - arrives
-	 * this far behind the deck those things belong to, which is drawn exactly. They are sent ahead
-	 * by this much so that the sliding lands them in the right place.
+	 * <p>A client slides an entity a third of the way to each new position per tick, and with a
+	 * new position every tick that settles two ticks of travel behind. The collision hull is sent
+	 * this far ahead so the sliding lands it under the feet of a rider who is carried at the
+	 * ship's real pace. It was three when the deck's own pose reached the client a tick before
+	 * the hull did; Pandorical now sends both in the same pass, and the extra tick is gone.
+	 *
+	 * <p>Cushions are not sent ahead at all. They blend by the deck's own rule, so sent where the
+	 * deck is they are drawn where the deck is drawn, and whoever sits on one sits on the boards.
 	 */
-	public static final double CLIENT_INTERP_TICKS = 3.0;
+	public static final double CLIENT_INTERP_TICKS = 2.0;
 
 	// --- Height keeping ---
 	// A ship holds the height it was christened at; nothing tracks the water any more.

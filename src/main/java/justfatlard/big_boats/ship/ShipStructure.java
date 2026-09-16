@@ -7,6 +7,7 @@ import justfatlard.pandorical.api.RelPos;
 import justfatlard.pandorical.api.StructurePose;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,12 +19,11 @@ import java.util.Map;
  *
  * <p>The structure is posed with independent world coordinates, decoupled from the
  * anchor entity's own position (which orbits the helm at the passenger seat; see
- * {@link MultiBlockShipEntity} class docs). It is posed directly at the helm's world
- * position/yaw, exactly what {@link ShipPose} represents, with each block's
- * {@link RelPos} left as its unmodified integer {@link RelativeBlockPos}. The client
- * renderer rotates {@code pose + Rotate(yaw) * relPos}, which is bit-for-bit the same
- * transform as {@link ShipPose#toWorld}, so visual and physics/collision positions
- * stay consistent.</p>
+ * {@link MultiBlockShipEntity} class docs), at {@link ShipPose#renderOrigin}, with each
+ * block's {@link RelPos} left as its unmodified integer {@link RelativeBlockPos}. The
+ * client renderer draws a block's model at {@code origin + Rotate(yaw) * (relPos + v)},
+ * turning it about the origin; that origin is chosen so the result is the same block
+ * centre collision and docking use.</p>
  */
 public class ShipStructure {
 	private final String structureId;
@@ -55,13 +55,15 @@ public class ShipStructure {
 
 	/** Converts a ship pose to Pandorical's world-space structure pose (yaw in degrees). */
 	public static StructurePose toStructurePose(ShipPose pose) {
-		return new StructurePose(pose.helmX(), pose.helmY(), pose.helmZ(), (float) Math.toDegrees(pose.yawRadians()));
+		Vec3 origin = pose.renderOrigin();
+		return new StructurePose(origin.x, origin.y, origin.z, (float) Math.toDegrees(pose.yawRadians()));
 	}
 
 	/** Registers and broadcasts this structure. No-op if already spawned. */
 	public void spawn(Entity anchorEntity, List<ShipBlock> blocks, ShipPose initialPose) {
 		if (spawned) return;
 		PandoricalApi.structures().spawn(anchorEntity, structureId, toBlockEntries(blocks), toStructurePose(initialPose));
+		PandoricalApi.structures().setWalkable(structureId, true);
 		spawned = true;
 	}
 

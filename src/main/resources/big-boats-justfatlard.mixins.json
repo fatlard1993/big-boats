@@ -6,6 +6,8 @@
     "BlockAttachedEntityAccessor",
     "CollisionShulkerMixin",
     "CushionSurvivesMixin",
+    "HullCollisionDeckWalkerMixin",
+    "HullCollisionUnsentMixin",
     "HangingEntityAccessor",
     "InteractionAccessor",
     "ServerGamePacketListenerMixin"
