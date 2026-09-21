@@ -41,6 +41,23 @@ public final class ShipConfig {
 	// Rotation rate: 2 degrees/tick = 40 deg/sec = full 360° in 9 seconds.
 	public static final float TURN_SPEED = (float) Math.toRadians(2.0);
 
+	/**
+	 * The largest box a docking ship will flood to look for enclosed rooms to drain.
+	 *
+	 * <p>Not a tuning knob so much as a floor under the worst case: the search is over the hull's
+	 * bounding box, and a ship's block count says nothing about how far apart those blocks are.
+	 * Half a million positions is a generous forty-block cube and still a cheap HashSet.
+	 */
+	public static final long MAX_BAIL_VOLUME = 512_000;
+
+	/**
+	 * How long a ship keeps asking the level for the collision entities its last session left.
+	 *
+	 * <p>Ten seconds. They arrive with their chunk, which is not the tick the ship arrives on, and
+	 * an entity that has not appeared in this long is not going to.
+	 */
+	public static final int ORPHAN_SWEEP_TICKS = 200;
+
 	// --- Size limits ---
 
 	// Upper bound on flood-fill detection. Balances ship ambition vs. server entity budget.
@@ -90,19 +107,9 @@ public final class ShipConfig {
 	// Collision shulker positions update when ANY of these thresholds is exceeded.
 	// Balances visual accuracy vs. server load from repositioning many entities.
 
-	// ~5 degrees in radians. Rotation smaller than this is imperceptible at collision resolution.
-	public static final float COLLISION_UPDATE_YAW_THRESHOLD = 0.087f;
 
-	// Half a block. Shulkers are 1-block wide, so 0.5 keeps overlap within one block width.
-	public static final double COLLISION_UPDATE_POS_THRESHOLD = 0.5;
 
 	// Fallback: update at least every 5 ticks (4x/sec) even if thresholds aren't met.
-	/**
-	 * Every tick. The hull's collision used to be allowed to fall five ticks or half a block behind
-	 * the ship before it was worth moving, which is a long way to be wrong about where the floor is
-	 * - a rider standing still on a deck that had left without them simply dropped through it.
-	 */
-	public static final int COLLISION_UPDATE_TICK_INTERVAL = 1;
 
 	/**
 	 * How far behind its latest position a client draws a moving entity, in ticks of travel.
@@ -121,7 +128,6 @@ public final class ShipConfig {
 	// --- Height keeping ---
 	// A ship holds the height it was christened at; nothing tracks the water any more.
 
-	// Y position delta below which the ship is considered at target height. Prevents jitter.
 	/**
 	 * Ticks between a sailing ship looking for cushions it should be carrying. Comfortably under
 	 * vanilla's own hundred-tick support check, which is the thing being got in front of.
@@ -131,13 +137,13 @@ public final class ShipConfig {
 	/** Ticks between a docked ship checking that it still has a helm to be steered by. */
 	public static final int DOCKED_HELM_CHECK_INTERVAL = 40;
 
-	public static final double FLOAT_SNAP_THRESHOLD = 0.01;
+	public static final double HOLD_SNAP_THRESHOLD = 0.01;
 
 	// Fraction of Y distance to close per tick. 0.1 = 10% per tick ≈ smooth ease-in.
-	public static final double FLOAT_LERP_FACTOR = 0.1;
+	public static final double HOLD_LERP_FACTOR = 0.1;
 
 	// Maximum Y velocity in blocks/tick. Prevents jarring vertical jumps.
-	public static final double FLOAT_MAX_Y_SPEED = 0.1;
+	public static final double HOLD_MAX_Y_SPEED = 0.1;
 
 	// --- Entity tracking ---
 

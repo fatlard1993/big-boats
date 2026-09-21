@@ -43,7 +43,12 @@ public final class ShipSeats {
 	 * <p>Static because a mixin has no way to reach the particular ship, and one flat set is
 	 * cheaper to ask than a search: the question is asked by every cushion in the world.
 	 */
-	private static final Set<UUID> CARRIED = new HashSet<>();
+	private static final Set<UUID> CARRIED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+	/** Forget every carried cushion. Called when the server stops; see {@code BigBoats}. */
+	public static void forgetAll() {
+		CARRIED.clear();
+	}
 
 	/** Whether this cushion is being carried by a ship, and so should not test the ground. */
 	public static boolean isCarried(UUID id) {

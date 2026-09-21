@@ -64,7 +64,7 @@ public class ShipDocking {
 	static final Codec<List<BlockPos>> BLOCK_POS_LIST_CODEC = BlockPos.CODEC.listOf();
 
 	// IMMUTABLE SNAPSHOTS: every assignment uses List.copyOf().
-	// Volatile: read by writeCustomData on chunk-saving thread.
+	// Volatile: read by addAdditionalSaveData on the chunk-saving thread.
 	private volatile List<BlockPos> dockedBlockPositions = List.of();
 	private volatile List<ShipDecoration> decorations = List.of();
 
@@ -101,7 +101,7 @@ public class ShipDocking {
 	 * anything it cannot is a room. That distinction is what keeps this from draining the pond a
 	 * ship happens to be moored in, and it is also why an open boat needs nothing drained - its
 	 * deck is open to the sky, so nothing aboard is enclosed, and the hull riding on the surface
-	 * (see {@code ShipConfig.HULL_DRAFT}) is what keeps that deck dry instead.
+	 * riding on the surface is what keeps that deck dry instead.
 	 */
 	private static void bailOut(ServerLevel world, List<BlockPos> shipPositions) {
 		if (shipPositions.isEmpty()) return;
@@ -114,6 +114,18 @@ public class ShipDocking {
 			minX = Math.min(minX, pos.getX()); maxX = Math.max(maxX, pos.getX());
 			minY = Math.min(minY, pos.getY()); maxY = Math.max(maxY, pos.getY());
 			minZ = Math.min(minZ, pos.getZ()); maxZ = Math.max(maxZ, pos.getZ());
+		}
+
+		// The walk below is over the bounding BOX, and nothing anywhere bounds a ship's extent -
+		// only its block count. Six arms of a few hundred blocks enclose a box of a hundred
+		// million positions, and filling a HashSet with them is an OutOfMemoryError, which is an
+		// Error and so goes straight past dock()'s catch and strands the ship mid-dock. A ship
+		// spread that thin has no enclosed room to drain anyway.
+		long volume = (long) (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
+		if (volume > ShipConfig.MAX_BAIL_VOLUME) {
+			LOGGER.warn("Skipping bail-out for a ship spanning {} positions (limit {}) — too spread out to hold water",
+				volume, ShipConfig.MAX_BAIL_VOLUME);
+			return;
 		}
 
 		// Flood from the box's shell inward, through anything that is not hull. What this reaches
@@ -201,6 +213,7 @@ public class ShipDocking {
 		net.minecraft.world.level.block.Rotation blockRotation = ShipBlockUtils.yawToBlockRotation(snap.yawDegrees());
 
 		List<BlockPos> newDockedPositions = new ArrayList<>();
+		List<RelativeBlockPos> salvaged = new ArrayList<>();
 		int blockedCount = 0;
 		int lostBlockEntities = 0;
 
@@ -235,6 +248,7 @@ public class ShipDocking {
 				}
 			} else {
 				salvageObstructedBlock(world, block, worldPos);
+				salvaged.add(block.relativePos());
 				// A painted chest that cannot be set down comes apart into a chest and its dye,
 				// which is what breaking one does. The colour was taken off its old position when
 				// the ship sailed, so without this the dye is simply gone.
@@ -250,12 +264,9 @@ public class ShipDocking {
 		LOGGER.debug("Dock placed {} blocks, {} obstructed, {} lost block entities",
 			newDockedPositions.size(), blockedCount, lostBlockEntities);
 
-		return new DockStats(newDockedPositions.size(), blockedCount, lostBlockEntities);
+		return new DockStats(newDockedPositions.size(), blockedCount, lostBlockEntities, List.copyOf(salvaged));
 	}
 
-	/**
-	 * Restores decoration entities (item frames, paintings) into the world.
-	 */
 	public void restoreDecorations(ServerLevel world, double helmX, double helmY, double helmZ,
 									ShipBlockUtils.SnappedRotation snap) {
 		if (decorations.isEmpty()) return;
@@ -417,10 +428,7 @@ public class ShipDocking {
 		}
 	}
 
-	/**
-	 * Adds newly absorbed block positions to the docked positions list.
-	 * Called by rescan when new blocks are detected adjacent to the ship.
-	 */
+	/** A docked ship that has grown owns the ground its new blocks stand on. */
 	public void addDockedPositions(List<BlockPos> newPositions) {
 		List<BlockPos> updated = new ArrayList<>(dockedBlockPositions);
 		updated.addAll(newPositions);
@@ -500,5 +508,12 @@ public class ShipDocking {
 
 	// --- Result record ---
 
-	public record DockStats(int placed, int obstructed, int lostBlockEntities) {}
+	/**
+	 * @param salvaged the blocks handed back as dropped items because their cell was occupied.
+	 *                 The ship must let these go: they have been paid out once, and a ship that
+	 *                 keeps them in its manifest places them again at the next clear dock, which
+	 *                 is one cobblestone per duplicated block for anyone who notices.
+	 */
+	public record DockStats(int placed, int obstructed, int lostBlockEntities,
+							List<RelativeBlockPos> salvaged) {}
 }

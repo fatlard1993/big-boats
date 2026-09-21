@@ -1,7 +1,6 @@
 package justfatlard.big_boats.block;
 
 import justfatlard.big_boats.ship.MultiBlockShipEntity;
-import justfatlard.big_boats.ship.ShipConfig;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerPlayer;
@@ -96,6 +95,11 @@ public class HelmBlock extends HorizontalDirectionalBlock implements EntityBlock
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel world, BlockPos pos,
 			boolean movedByPiston) {
 		super.affectNeighborsAfterRemoval(state, world, pos, movedByPiston);
+
+		// A piston is moving it, not breaking it: the flag exists to tell those apart, and
+		// treating a push as a destruction let any redstone contraption beside a moored ship
+		// delete the ship, its name and its rating while leaving the hull standing.
+		if (movedByPiston) return;
 
 		for (MultiBlockShipEntity ship : world.getEntities(
 				net.minecraft.world.level.entity.EntityTypeTest.forClass(MultiBlockShipEntity.class),

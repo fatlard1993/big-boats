@@ -35,7 +35,15 @@ public final class DyedChestPaint {
 	 */
 	public static String lift(ServerLevel world, BlockPos pos) {
 		if (!PRESENT) return null;
-		return justfatlard.chest_utils.block.DyedChests.get(world).strip(world, pos);
+		try {
+			return justfatlard.chest_utils.block.DyedChests.get(world).strip(world, pos);
+		} catch (LinkageError e) {
+			// chest-utils is declared as a suggestion with no version floor, so its signatures
+			// are free to move under us. A ship losing a chest's colour is a loss; a ship
+			// failing to undock over one is a bigger one.
+			warnOnce(e);
+			return null;
+		}
 	}
 
 	/**
@@ -46,12 +54,30 @@ public final class DyedChestPaint {
 	 */
 	public static void refund(ServerLevel world, BlockPos pos, String colour) {
 		if (!PRESENT || colour == null) return;
-		justfatlard.chest_utils.block.DyeInteraction.giveBack(world, pos, colour);
+		try {
+			justfatlard.chest_utils.block.DyeInteraction.giveBack(world, pos, colour);
+		} catch (LinkageError e) {
+			warnOnce(e);
+		}
 	}
 
 	/** Put a carried colour back onto a chest at its new home. */
 	public static void lay(ServerLevel world, BlockPos pos, String colour) {
 		if (!PRESENT || colour == null) return;
-		justfatlard.chest_utils.block.DyedChests.get(world).paint(world, pos, colour);
+		try {
+			justfatlard.chest_utils.block.DyedChests.get(world).paint(world, pos, colour);
+		} catch (LinkageError e) {
+			warnOnce(e);
+		}
+	}
+
+	private static boolean warned = false;
+
+	/** Once per session: a signature that has moved will move on every chest for the rest of it. */
+	private static void warnOnce(LinkageError e) {
+		if (warned) return;
+		warned = true;
+		org.slf4j.LoggerFactory.getLogger(DyedChestPaint.class)
+			.warn("chest-utils has changed under us; painted chests will travel unpainted", e);
 	}
 }

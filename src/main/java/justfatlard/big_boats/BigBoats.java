@@ -157,8 +157,14 @@ public class BigBoats implements ModInitializer {
 
 		// Ships render nothing themselves: the Pandorical structure is the visible object.
 		// The christening bottle renders as a normal thrown item.
-		PandoricalApi.registerEntityRenderer(MULTI_BLOCK_SHIP_ENTITY_TYPE, "invisible");
-		PandoricalApi.registerEntityRenderer(CHRISTENING_BOTTLE_ENTITY_TYPE, "thrown_item");
+		//
+		// Inside the same guard as every other Pandorical call, not beside it. Pandorical is a
+		// hard dependency and the guard is always true, but a reader deciding whether their new
+		// call needs wrapping should not have to work out which of two answers this file means.
+		if (PandoricalApi.isAvailable()) {
+			PandoricalApi.registerEntityRenderer(MULTI_BLOCK_SHIP_ENTITY_TYPE, "invisible");
+			PandoricalApi.registerEntityRenderer(CHRISTENING_BOTTLE_ENTITY_TYPE, "thrown_item");
+		}
 
 		ResourceKey<CreativeModeTab> tabKey = ResourceKey.create(
 			Registries.CREATIVE_MODE_TAB, Identifier.fromNamespaceAndPath(MOD_ID, "big_boats"));
@@ -212,6 +218,8 @@ public class BigBoats implements ModInitializer {
 			return InteractionResult.PASS;
 		});
 
+		ShipLockCommand.register();
+
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 			dispatcher.register(
 				Commands.literal("bigboats")
@@ -224,11 +232,24 @@ public class BigBoats implements ModInitializer {
 
 		// Clean up player input storage on disconnect to prevent memory leak
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-			PlayerInputStorage.removePlayer(handler.getPlayer().getUUID());
+			// Guarded because this runs inside another mod's event chain as much as ours: an NPE
+			// thrown out of here stops every later handler's cleanup, not just this one's.
+			ServerPlayer leaving = handler.getPlayer();
+			if (leaving != null) PlayerInputStorage.removePlayer(leaving.getUUID());
 		});
 
 		// Tick-spread listener for cleanup-lights command (registered once, checks flag each tick)
 		ServerTickEvents.END_SERVER_TICK.register(BigBoats::tickCleanup);
+
+		// Three static registries and a half-finished sweep, all of which outlive a world that
+		// is only unloaded rather than exited. In single player that means the next world starts
+		// holding the last one's ids.
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+			resetCleanup();
+			PlayerInputStorage.forgetAll();
+			justfatlard.big_boats.ship.ShipSeats.forgetAll();
+			justfatlard.big_boats.ship.ShipCollisionEntities.forgetAll();
+		});
 
 		LOGGER.info("[" + MOD_ID + "] Loaded");
 	}
@@ -244,20 +265,38 @@ public class BigBoats implements ModInitializer {
 	private static int cleanupRemoved = 0;
 	private static final int COLUMNS_PER_TICK = 50;
 
-	private static void tickCleanup(MinecraftServer ignoredServer) {
+	private static void tickCleanup(MinecraftServer server) {
 		if (cleanupQueue == null || cleanupQueue.isEmpty()) return;
 
+		// The level this sweep was started in, and whether it is still the one running. A single-
+		// player world that was left mid-sweep used to leave this field pointing at an unloaded
+		// level - keeping it in memory, and resuming against it on the next world load while the
+		// command refused every new request with "already in progress".
+		if (cleanupWorld == null || cleanupWorld.getServer() != server) {
+			resetCleanup();
+			return;
+		}
+
 		int processed = 0;
-		while (!cleanupQueue.isEmpty() && processed < COLUMNS_PER_TICK) {
-			int[] col = cleanupQueue.poll();
-			for (int y = cleanupMinY; y <= cleanupMaxY; y++) {
-				var checkPos = new BlockPos(col[0], y, col[1]);
-				if (cleanupWorld.getBlockState(checkPos).getBlock() == Blocks.LIGHT) {
-					cleanupWorld.setBlock(checkPos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
-					cleanupRemoved++;
+		try {
+			while (!cleanupQueue.isEmpty() && processed < COLUMNS_PER_TICK) {
+				int[] col = cleanupQueue.poll();
+				for (int y = cleanupMinY; y <= cleanupMaxY; y++) {
+					var checkPos = new BlockPos(col[0], y, col[1]);
+					// Unloaded chunks are not swept and are certainly not generated to be swept.
+					if (!cleanupWorld.isLoaded(checkPos)) continue;
+					if (cleanupWorld.getBlockState(checkPos).getBlock() == Blocks.LIGHT) {
+						cleanupWorld.setBlock(checkPos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
+						cleanupRemoved++;
+					}
 				}
+				processed++;
 			}
-			processed++;
+		} catch (RuntimeException e) {
+			// Without this the same throw repeats every tick for the rest of the session.
+			LOGGER.error("Light cleanup failed — abandoning the sweep", e);
+			resetCleanup();
+			return;
 		}
 
 		if (cleanupQueue.isEmpty()) {
@@ -269,6 +308,14 @@ public class BigBoats implements ModInitializer {
 			cleanupSource = null;
 			cleanupWorld = null;
 		}
+	}
+
+	/** Forget a sweep, whether it finished, failed, or lost the world it belonged to. */
+	private static void resetCleanup() {
+		cleanupQueue = null;
+		cleanupSource = null;
+		cleanupWorld = null;
+		cleanupRemoved = 0;
 	}
 
 	private static int cleanupLightsCommand(com.mojang.brigadier.context.CommandContext<net.minecraft.commands.CommandSourceStack> context) {

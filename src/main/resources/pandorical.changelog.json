@@ -1,0 +1,19 @@
+{
+	"overview": [
+		"Build a ship out of ordinary blocks, put a helm on it, christen it with a bottle and sail the whole thing away as one vessel."
+	],
+	"versions": {
+		"1.1.0": [
+			"Ships lock the way chests do. /ship-lock makes the ship you are standing on yours, share lets a crew take the helm, and anyone else is kept off it and off its blocks. Ships christened before this stay open to everybody until somebody locks them.",
+			"A deck no longer keeps a hole you fall through, docking a ship that has grown hands a blocked-out block back once rather than twice, and a ship with part of itself in a chunk nobody has loaded waits instead of sailing off without that half."
+		],
+		"1.0.1": [
+			"Everything aboard turns about the same point now, so a ship is drawn where it actually is and a quarter turn no longer leaves a seat hanging a block off the deck.",
+			"Decks can be walked on while the ship is under way, and coral, fans, pickles and loosely held terrain give way to a hull, so reefs and shallows can be threaded. Anything built still stops you."
+		],
+		"1.0.0": [
+			"Build any structure, set a helm in it and christen it with a heart of the sea in a bottle. A plain helm carries a hundred blocks, and the Tonnage enchantment raises that to four hundred, a thousand and two thousand.",
+			"A fisherman sells the planks, the helm, the bottle and both recipes, because nothing else in the game hints that a ship is possible at all."
+		]
+	}
+}

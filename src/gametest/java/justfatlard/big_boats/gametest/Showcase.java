@@ -66,7 +66,8 @@ public final class Showcase implements FabricClientGameTest {
 			fill(server, x - 1, deck + 4, z, x + 1, deck + 4, z, "minecraft:oak_fence");
 			fill(server, x - 1, deck + 5, z, x + 1, deck + 6, z, "minecraft:white_wool");
 
-			// The wheel, at the stern, facing the way the ship sails.
+			// The wheel, at the stern. A helm faces the pilot, and the pilot faces the bow, so
+			// one placed facing south drives the ship north - which is why the bow is at +z.
 			server.runCommand("setblock %d %d %d big-boats-justfatlard:helm".formatted(x, deck + 3, z - 4));
 
 			// Southeast of it, looking back: yaw is measured from south, so the way to face a thing
@@ -109,8 +110,23 @@ public final class Showcase implements FabricClientGameTest {
 		}
 	}
 
+	/**
+	 * A /fill, in slabs vanilla will actually accept.
+	 *
+	 * <p>The command refuses more than 32768 blocks at a time and says so to the source, which for
+	 * a gametest is nobody: the scene simply never got built and the test went on against whatever
+	 * terrain was there. The air fill here is 137,781 blocks and has never once run - it passed
+	 * only because the region above a pond is already air.
+	 */
 	private void fill(TestServerContext server, int x1, int y1, int z1, int x2, int y2, int z2, String block) {
-		server.runCommand("fill %d %d %d %d %d %d %s".formatted(x1, y1, z1, x2, y2, z2, block));
+		int area = (Math.abs(x2 - x1) + 1) * (Math.abs(z2 - z1) + 1);
+		int slab = Math.max(1, 32768 / Math.max(1, area));
+		int low = Math.min(y1, y2);
+		int high = Math.max(y1, y2);
+		for (int y = low; y <= high; y += slab) {
+			int top = Math.min(high, y + slab - 1);
+			server.runCommand("fill %d %d %d %d %d %d %s".formatted(x1, y, z1, x2, top, z2, block));
+		}
 	}
 
 	/**

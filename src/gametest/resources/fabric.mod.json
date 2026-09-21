@@ -3,11 +3,12 @@
 	"id": "big-boats-gametest",
 	"version": "1.0.0",
 	"name": "Big Boats game tests",
-	"description": "The pictures for the readme and the mod page.",
+	"description": "Client gametests: the readme pictures, and the pilot the ship has to carry.",
 	"license": "MIT",
 	"environment": "*",
 	"entrypoints": {
 		"fabric-client-gametest": [
+			"justfatlard.big_boats.gametest.PilotFollowsShip",
 			"justfatlard.big_boats.gametest.Showcase"
 		]
 	},

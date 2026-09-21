@@ -122,9 +122,6 @@ public final class ShipBlockUtils {
 		return !isBreakableByShip(state);
 	}
 
-	/**
-	 * Converts ship yaw (in degrees) to a Rotation for rotating block states.
-	 */
 	public static Rotation yawToBlockRotation(float yaw) {
 		float normalizedYaw = ((yaw % 360) + 360) % 360;
 		int rotation = Math.round(normalizedYaw / 90) % 4;
@@ -138,8 +135,12 @@ public final class ShipBlockUtils {
 	}
 
 	/**
-	 * Converts a Direction to yaw degrees for ship movement.
-	 * W moves toward the helm's facing direction.
+	 * The heading a helm of this facing sails on, in degrees.
+	 *
+	 * <p>Away from the way the helm faces, not toward it: the wheel faces the pilot, the pilot
+	 * faces the bow, so a helm you read from the south drives the ship north. Deliberately the
+	 * inverse of vanilla's {@code Direction.toYRot()}, and the only statement of the convention
+	 * anywhere - {@code Showcase} builds its scene from it.
 	 */
 	public static float directionToYaw(Direction dir) {
 		return switch (dir) {
@@ -183,9 +184,7 @@ public final class ShipBlockUtils {
 	private static final Vec3 SEAT_OFFSET_EAST = new Vec3(0.5, 0, 0);
 	private static final Vec3 SEAT_OFFSET_WEST = new Vec3(-0.5, 0, 0);
 
-	/**
-	 * Returns the seat offset behind the helm based on the helm's facing direction.
-	 */
+	/** Where the pilot stands: on the side the wheel faces, looking back along the heading. */
 	public static Vec3 helmSeatOffset(Direction helmFacing) {
 		return switch (helmFacing) {
 			case NORTH -> SEAT_OFFSET_NORTH;
@@ -196,9 +195,6 @@ public final class ShipBlockUtils {
 		};
 	}
 
-	/**
-	 * Computes the world position of a ship block given the ship's helm position and snapped rotation.
-	 */
 	public static BlockPos relativeToWorld(RelativeBlockPos relPos, double helmX, double helmY, double helmZ, int cos, int sin) {
 		int rotatedX = relPos.x() * cos - relPos.z() * sin;
 		int rotatedZ = relPos.x() * sin + relPos.z() * cos;

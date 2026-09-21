@@ -34,7 +34,21 @@ public class ShipCollision {
 	// Two offsets per axis (2x2x2 = 8 samples) catches all block positions a
 	// hull block can overlap. The center (0) is redundant; corner samples always
 	// cover the center block position.
-	private static final double[] SAMPLE_OFFSETS = {-0.49, 0.49};
+	/**
+	 * Where a hull block is sampled, as a fraction of its half-width.
+	 *
+	 * <p>Just inside its own faces, so a block resting exactly against another does not read as
+	 * inside it. Scaled by {@link #rotatedHalfWidth} before use: a unit square turned forty-five
+	 * degrees is 1.414 wide, not 1, and sampling it at its unrotated half-width left the outer
+	 * seventh of the block untested - so a ship on a diagonal heading clipped its corners through
+	 * stone a ship on a cardinal heading would have been stopped by.
+	 */
+	private static final double[] SAMPLE_OFFSETS = {-0.98, 0.98};
+
+	/** Half the width a unit block presents to the axes at this heading: 0.5 to 0.707. */
+	private static double rotatedHalfWidth(float yawRadians) {
+		return 0.5 * (Math.abs(Math.cos(yawRadians)) + Math.abs(Math.sin(yawRadians)));
+	}
 
 	/**
 	 * Computes which blocks are on the exterior "hull" of the ship.
@@ -86,13 +100,17 @@ public class ShipCollision {
 			// stopped short of a jetty on those sides and scraped a seabed it was clear of.
 			Vec3 worldPos = pose.toWorld(hullPos).add(0.5, 0.5, 0.5);
 
+			// Across the deck the block is as wide as its heading makes it; up and down it is
+			// never rotated and stays half a block.
+			double across = rotatedHalfWidth(pose.yawRadians());
+
 			for (double ox : SAMPLE_OFFSETS) {
 				for (double oy : SAMPLE_OFFSETS) {
 					for (double oz : SAMPLE_OFFSETS) {
 						positions.add(new BlockPos(
-							(int) Math.floor(worldPos.x + ox),
-							(int) Math.floor(worldPos.y + oy),
-							(int) Math.floor(worldPos.z + oz)));
+							(int) Math.floor(worldPos.x + ox * across),
+							(int) Math.floor(worldPos.y + oy * 0.5),
+							(int) Math.floor(worldPos.z + oz * across)));
 					}
 				}
 			}
@@ -150,11 +168,14 @@ public class ShipCollision {
 	}
 
 	/**
-	 * Checks if the ship at a given rotation would collide with world terrain.
-	 * Unlike movement collision, rotation does NOT break fragile blocks; the
-	 * rotation is prevented instead.
+	 * Whether turning to this heading would put the hull through anything solid.
 	 *
-	 * @return true if collision detected, false if rotation is clear
+	 * <p>Fragile blocks and loose terrain are passed over rather than broken: unlike a move, a
+	 * turn neither stops for them nor destroys them, so a ship turning through kelp leaves the
+	 * kelp standing inside its hull until it next moves. Worth knowing before changing it - the
+	 * alternative is a turn that shears a garden while standing still.
+	 *
+	 * @return true if something solid is in the way, false if the turn is clear
 	 */
 	public boolean checkCollisionAtRotation(Level world, ShipPose pose) {
 		Set<BlockPos> positionsToCheck = gatherCollisionPositions(pose);
@@ -176,10 +197,7 @@ public class ShipCollision {
 		return false;
 	}
 
-	/**
-	 * Returns the set of world BlockPos that hull blocks occupy at the given pose.
-	 * Used by other ships to check for ship-to-ship collision.
-	 */
+	/** Asked by other ships, to find out whether they would be sailing through this one. */
 	public Set<BlockPos> getWorldHullPositions(ShipPose pose) {
 		return gatherCollisionPositions(pose);
 	}

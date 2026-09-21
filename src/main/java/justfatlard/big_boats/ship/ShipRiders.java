@@ -103,10 +103,20 @@ public final class ShipRiders {
 	 */
 	public void carry(ServerLevel world, MultiBlockShipEntity ship, List<ShipBlock> blocks,
 					  ShipPose from, ShipPose to, AABB searchBox) {
-		if (!moved(from, to)) return;
+		// Both early returns forget who was aboard, because what the map buys is the looser reach
+		// that keeps a jumping rider - and a ship that has stopped is not carrying anyone through
+		// a jump. Kept across a standstill, an entry that had wandered onto a jetty four blocks
+		// up still counted as aboard, and the ship took them with it when it got under way.
+		if (!moved(from, to)) {
+			riders.clear();
+			return;
+		}
 
 		indexBlocks(blocks);
-		if (occupied.isEmpty()) return;
+		if (occupied.isEmpty()) {
+			riders.clear();
+			return;
+		}
 
 		float turn = Mth.wrapDegrees((float) Math.toDegrees(to.yawRadians() - from.yawRadians()));
 		Set<UUID> aboard = new HashSet<>();

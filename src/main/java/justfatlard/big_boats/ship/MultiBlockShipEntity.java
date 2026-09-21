@@ -92,8 +92,13 @@ public class MultiBlockShipEntity extends Entity {
 		DOCKED, UNDOCKING, SAILING, DOCKING
 	}
 
-	// writeCustomData reads this from the chunk-saving thread while tick/rescan writes on the
+	// addAdditionalSaveData reads this from the chunk-saving thread while tick/rescan writes on the
 	// server thread. Every assignment must be a fresh immutable list: blocks = List.copyOf(local).
+	//
+	// That freezes the list and the references in it, and nothing further. A ShipBlock's
+	// CompoundTag is mutable and shared, so mutating a stored tag in place is a data race against
+	// serialisation that no exception will ever report. Replace the ShipBlock instead; withPaint
+	// and withBlockEntityData exist for exactly that.
 	private volatile List<ShipBlock> blocks = List.of();
 	private ShipStructure structure;
 
@@ -115,27 +120,49 @@ public class MultiBlockShipEntity extends Entity {
 	 * "a hundred blocks" would have the next rescan quietly leave most of an existing ship behind.
 	 * A ship already afloat keeps whatever size it was built at.
 	 */
-	private int capacity = ShipConfig.MAX_BLOCKS;
+	private volatile int capacity = ShipConfig.MAX_BLOCKS;
 
-	// Tracks the water surface when over water; holds last-known value over land.
-	// Volatile: read by writeCustomData on chunk-saving thread.
-	private volatile double floatTargetY;
+	/**
+	 * The height this ship keeps, set once at christening and never tracked to anything.
+	 *
+	 * <p>The NBT key is {@code target_y}, which does not match the field name; it is what existing
+	 * saves are written with and renaming it would strand every ship already afloat.
+	 *
+	 * <p>Volatile: read by addAdditionalSaveData on the chunk-saving thread.
+	 */
+	private volatile double heldY;
 
-	// The direction the helm faces (where the wheel is visible from)
-	private Direction helmFacing = Direction.NORTH;
+	// The direction the helm faces (where the wheel is visible from).
+	// Volatile: read by addAdditionalSaveData on the chunk-saving thread.
+	private volatile Direction helmFacing = Direction.NORTH;
+
+	/**
+	 * Whether this undock has taken the hull out of the world yet.
+	 *
+	 * <p>The one fact undock's recovery turns on: before it, the blocks are still standing and the
+	 * ship must abort; after it, they exist only in {@link #blocks} and must be put back.
+	 */
+	private boolean blocksLeftWorld = false;
+
+	/**
+	 * Collision entities from a previous session that still need discarding, and how long we have
+	 * been asking. Empty on all but the first seconds after a load.
+	 */
+	private List<UUID> pendingOrphans = List.of();
+	private int orphanSweepTicks = 0;
 
 	/** The pilot whose dismount is docking the ship, while it docks; see {@link ShipRiders#settle}. */
 	private Entity steppingOff;
 
 	// Ship rotation in radians (converted to/from degrees only at serialization boundaries).
-	// Volatile: read by writeCustomData on chunk-saving thread.
+	// Volatile: read by addAdditionalSaveData on the chunk-saving thread.
 	private volatile float yawRadians = 0;
 
 	// See class javadoc for the dual coordinate system explanation.
-	// Volatile: read by writeCustomData on chunk-saving thread.
+	// Volatile: read by addAdditionalSaveData on the chunk-saving thread.
 	private volatile double helmX, helmZ;
 
-	// Volatile: read by writeCustomData on chunk-saving thread.
+	// Volatile: read by addAdditionalSaveData on the chunk-saving thread.
 	private volatile ShipState state = ShipState.DOCKED;
 
 
@@ -150,8 +177,18 @@ public class MultiBlockShipEntity extends Entity {
 
 	private int ticksSinceSeatScan = 0;
 
-	// Set by a named christening bottle
-	private String shipName = null;
+	// Set by a named christening bottle.
+	// Volatile: read by addAdditionalSaveData on the chunk-saving thread.
+	private volatile String shipName = null;
+
+	/**
+	 * Who may sail this ship, or null for anybody.
+	 *
+	 * <p>Null on every ship built before locks existed and on every ship since that nobody has
+	 * locked, so the default is exactly the behaviour that was here before: a helm is a helm and
+	 * whoever reaches it sails. Locking is a thing the owner does, not a thing christening does.
+	 */
+	private ShipLock lock = null;
 
 	public MultiBlockShipEntity(EntityType<?> entityType, Level world) {
 		super(entityType, world);
@@ -162,7 +199,7 @@ public class MultiBlockShipEntity extends Entity {
 		this(BigBoats.MULTI_BLOCK_SHIP_ENTITY_TYPE, world);
 		this.setPos(x, y, z);
 		this.blocks = List.copyOf(blocks);
-		this.floatTargetY = y;
+		this.heldY = y;
 		this.helmFacing = helmFacing;
 
 		this.helmX = x;
@@ -250,14 +287,36 @@ public class MultiBlockShipEntity extends Entity {
 		// goes where the snap took the boards under their feet. The snap is up to half a block
 		// and forty-five degrees, and a rider left where they were stood in a wall or over the
 		// side, and slid about as the hull placed itself around them.
-		riders.settle(world, this, blocks, adrift, moored, this.getBoundingBox().inflate(hullReach()), steppingOff);
+		//
+		// Settling them is a courtesy; putting the hull back is the contract. Held apart so that
+		// a throw in here cannot skip the placement below - dock() would then mark the ship DOCKED
+		// with its blocks in no world at all, and the next undock's rescan, finding nothing where
+		// the ship should be, would abort forever.
+		try {
+			riders.settle(world, this, blocks, adrift, moored,
+				this.getBoundingBox().inflate(hullReach()), steppingOff);
 
-		// Before the cushions are released: the last sailing tick already put them over the hull,
-		// and the deck they were floating above is about to become blocks again underneath them.
-		seats.updatePositions(moored);
-		seats.release();
+			// Before the cushions are released: the last sailing tick already put them over the
+			// hull, and the deck they were floating above is about to become blocks again
+			// underneath them.
+			seats.updatePositions(moored);
+			seats.release();
+		} catch (RuntimeException e) {
+			LOGGER.error("Failed to settle riders or cushions while docking — placing the hull anyway", e);
+		}
 
 		ShipDocking.DockStats stats = docking.placeBlocks(world, blocks, helmX, this.getY(), helmZ, snap);
+
+		// A block that could not be set down was handed back as an item. It is not the ship's any
+		// more; keeping it would place a second copy at the next dock that had room for it.
+		if (!stats.salvaged().isEmpty()) {
+			Set<RelativeBlockPos> paidOut = new HashSet<>(stats.salvaged());
+			List<ShipBlock> remaining = new ArrayList<>(blocks.size());
+			for (ShipBlock block : blocks) {
+				if (!paidOut.contains(block.relativePos())) remaining.add(block);
+			}
+			blocks = List.copyOf(remaining);
+		}
 		docking.restoreDecorations(world, helmX, this.getY(), helmZ, snap);
 
 		// Notify nearby players of docking issues
@@ -302,6 +361,7 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		state = ShipState.UNDOCKING;
+		blocksLeftWorld = false;
 
 		try {
 			if (!undockInner(world)) {
@@ -309,16 +369,28 @@ public class MultiBlockShipEntity extends Entity {
 				state = ShipState.DOCKED;
 				return;
 			}
-		} catch (RuntimeException e) {
-			// Exception after removeBlocks: blocks have been removed from the world.
-			// Force-dock to place them back. Losing blocks is worse than catching broadly.
-			LOGGER.error("Exception during undock — force-docking to restore blocks", e);
 			state = ShipState.SAILING;
-			dock();
-			return;
+		} catch (RuntimeException e) {
+			// Which half threw decides what recovery means, and only the hull knows:
+			// blocksLeftWorld is set the instant removeBlocks returns. Before that the hull is
+			// still standing, and force-docking would find every cell occupied by the ship's own
+			// blocks and pay the whole ship out a second time as dropped items.
+			if (blocksLeftWorld) {
+				LOGGER.error("Exception during undock, hull already out of the world — force-docking to restore it", e);
+				state = ShipState.SAILING;
+				dock();
+			} else {
+				LOGGER.error("Exception during undock, hull still standing — aborting to docked", e);
+				state = ShipState.DOCKED;
+			}
+		} finally {
+			// An Error is not a RuntimeException and does not stop at the catch - but it passes
+			// through here. A state left at UNDOCKING is saved as docked, and a hull already out
+			// of the world is then owed by nobody and never comes back. The state always resolves.
+			if (state == ShipState.UNDOCKING) {
+				state = blocksLeftWorld ? ShipState.SAILING : ShipState.DOCKED;
+			}
 		}
-
-		state = ShipState.SAILING;
 	}
 
 	/**
@@ -357,6 +429,7 @@ public class MultiBlockShipEntity extends Entity {
 
 		// Capture decorations, snapshot block entities, remove blocks from world
 		blocks = docking.removeBlocks(world, blocks, helmX, this.getY(), helmZ, snap, posToBlockIndex, seats);
+		blocksLeftWorld = true;
 
 		// Position entity at passenger seat and sync structure
 		Vec3 seatWorld = computeSeatWorldPos();
@@ -370,7 +443,6 @@ public class MultiBlockShipEntity extends Entity {
 		ShipPose currentPose = pose();
 		collisionEntities.spawnAll(world, blocks, currentPose, collision.getHullBlocks());
 		collisionEntities.updatePositions(currentPose);
-		collisionEntities.syncTrackingState(helmX, helmZ, yawRadians);
 
 		lighting.detectFromBlocks(blocks);
 		lighting.spawnLightBlocks(world, currentPose);
@@ -385,7 +457,7 @@ public class MultiBlockShipEntity extends Entity {
 
 	/** Whether this entity is one of the ship's own: collision hulls, the helm interaction. */
 	public boolean ownsChildEntity(Entity entity) {
-		return collisionEntities.getTrackedChildEntityUUIDs().contains(entity.getUUID());
+		return collisionEntities.ownsChildEntity(entity.getUUID());
 	}
 
 	/**
@@ -403,15 +475,29 @@ public class MultiBlockShipEntity extends Entity {
 			(float) (to.yawRadians() + (to.yawRadians() - from.yawRadians()) * ticks));
 	}
 
-	/** How far the hull reaches from the entity anchor, for entity queries over the whole ship. */
+	/**
+	 * How far the hull reaches from the helm, for entity queries that must contain the whole ship.
+	 *
+	 * <p>Across the deck the reach is the diagonal, not the widest axis: the box is axis-aligned
+	 * and the ship is not, so a corner block swings out to its Euclidean radius as the ship turns
+	 * and is furthest out at forty-five degrees. Taking the per-axis maximum instead left every
+	 * search box short on a diagonal heading, which is a rider the deck stops carrying and a
+	 * cushion the ship stops taking aboard, on the headings nobody tests.
+	 *
+	 * <p>Height is kept separate rather than folded in with them, because a mast turns about the
+	 * hull and does not swing outward: rolling it into the diagonal would inflate every box by a
+	 * spar's length, and dropping it would lose whoever is up there.
+	 */
 	private double hullReach() {
-		double reach = 1;
+		double acrossX = 1;
+		double acrossZ = 1;
+		double vertical = 1;
 		for (ShipBlock block : blocks) {
-			reach = Math.max(reach, Math.abs(block.relativePos().x()));
-			reach = Math.max(reach, Math.abs(block.relativePos().y()));
-			reach = Math.max(reach, Math.abs(block.relativePos().z()));
+			acrossX = Math.max(acrossX, Math.abs(block.relativePos().x()));
+			acrossZ = Math.max(acrossZ, Math.abs(block.relativePos().z()));
+			vertical = Math.max(vertical, Math.abs(block.relativePos().y()));
 		}
-		return reach + 1;
+		return Math.max(Math.hypot(acrossX, acrossZ), vertical) + 1;
 	}
 
 	private Vec3 computeSeatWorldPos() {
@@ -422,6 +508,20 @@ public class MultiBlockShipEntity extends Entity {
 
 	public boolean isDocked() {
 		return state == ShipState.DOCKED;
+	}
+
+	/** Who may sail this ship, or null if anybody may. */
+	public ShipLock getLock() {
+		return lock;
+	}
+
+	public void setLock(ShipLock lock) {
+		this.lock = lock;
+	}
+
+	/** Whether this player may do this with the ship. An unlocked ship permits everything. */
+	public boolean permits(java.util.UUID player, ShipLock.Use use) {
+		return lock == null || lock.permits(player, use);
 	}
 
 	public ShipState getShipState() {
@@ -612,6 +712,13 @@ public class MultiBlockShipEntity extends Entity {
 	 * can cause inconsistent passenger state.
 	 */
 	public boolean tryMount(ServerPlayer player) {
+		if (!permits(player.getUUID(), ShipLock.Use.PILOT)) {
+			player.sendSystemMessage(
+				Component.translatable("big-boats.ship.locked", lock.ownerName())
+					.withStyle(ChatFormatting.RED), true);
+			return false;
+		}
+
 		if (this.hasPassenger(player)) {
 			// Helm click while piloting stops driving: stopRiding -> removePassenger
 			// handles the dock and camera reset, same as the sneak dismount
@@ -630,7 +737,7 @@ public class MultiBlockShipEntity extends Entity {
 			BlockPos helmPos = BlockPos.containing(helmX, this.getY(), helmZ);
 
 			var groundingResult = FloodFillDetector.detectGrounding(
-				world, shipPositions, blocks.size(), helmPos);
+				world, shipPositions, blocks.size(), capacity, helmPos);
 
 			if (!groundingResult.canUndock()) {
 				player.sendSystemMessage(
@@ -680,6 +787,8 @@ public class MultiBlockShipEntity extends Entity {
 
 		if (passenger instanceof ServerPlayer player) {
 			PandoricalApi.camera().reset(player);
+			// Their last input dies with the voyage; kept, it is a stuck key on the next helm.
+			PlayerInputStorage.removePlayer(player.getUUID());
 		}
 
 		if (state == ShipState.SAILING && this.getPassengers().isEmpty() && !this.level().isClientSide()) {
@@ -712,7 +821,8 @@ public class MultiBlockShipEntity extends Entity {
 		if (index >= 0 && index < current.size()) {
 			ShipBlock oldBlock = current.get(index);
 			List<ShipBlock> updated = new ArrayList<>(current);
-			updated.set(index, new ShipBlock(oldBlock.relativePos(), newState));
+			updated.set(index, new ShipBlock(oldBlock.relativePos(), newState,
+				oldBlock.blockEntityData(), oldBlock.paint()));
 			blocks = List.copyOf(updated);
 
 			if (structure != null) {
@@ -725,6 +835,8 @@ public class MultiBlockShipEntity extends Entity {
 	public void tick() {
 		super.tick();
 
+		sweepOrphanedChildren();
+
 		if (state != ShipState.SAILING) {
 			if (state == ShipState.DOCKED) checkHelmSurvives();
 			return;
@@ -736,11 +848,8 @@ public class MultiBlockShipEntity extends Entity {
 			return;
 		}
 
-		// Periodically adapt float height to water surface below the ship.
-		// Samples multiple columns (helm + extremes) so long ships don't embed
-		// one end in terrain when approaching shore.
-		// No water sampling. A ship holds the height it was christened at and nothing moves it but
-		// its own collision.
+		// A ship holds the height it was christened at, and nothing moves it but its own
+		// collision.
 		//
 		// Chasing the water surface was the source of every altitude complaint in turn: floating by
 		// the helm sank tall ships, floating by the keel needed a draft nobody could pick, and
@@ -753,14 +862,14 @@ public class MultiBlockShipEntity extends Entity {
 		// because riders are carried by the difference between this and where the ship ends up.
 		ShipPose entryPose = pose();
 
-		// Floating physics: ease toward water surface
+		// Ease back to the held height, wherever collision has pushed it.
 		double currentY = this.getY();
-		double yDiff = floatTargetY - currentY;
+		double yDiff = heldY - currentY;
 		double yVelocity = 0;
 
-		if (Math.abs(yDiff) > ShipConfig.FLOAT_SNAP_THRESHOLD) {
-			yVelocity = yDiff * ShipConfig.FLOAT_LERP_FACTOR;
-			yVelocity = Math.max(-ShipConfig.FLOAT_MAX_Y_SPEED, Math.min(ShipConfig.FLOAT_MAX_Y_SPEED, yVelocity));
+		if (Math.abs(yDiff) > ShipConfig.HOLD_SNAP_THRESHOLD) {
+			yVelocity = yDiff * ShipConfig.HOLD_LERP_FACTOR;
+			yVelocity = Math.max(-ShipConfig.HOLD_MAX_Y_SPEED, Math.min(ShipConfig.HOLD_MAX_Y_SPEED, yVelocity));
 		}
 
 		ServerPlayer controller = null;
@@ -784,7 +893,12 @@ public class MultiBlockShipEntity extends Entity {
 
 			// A/D rotates the ship; blocked by terrain or other ships
 			if (sideways != 0) {
-				float newYaw = yawRadians - sideways * ShipConfig.TURN_SPEED;
+				// Wrapped, because this one is absolute and kept: every consumer that takes a
+				// difference is fine either way, but the value is also serialised as a float in
+				// degrees and bucketed by ShipLighting, and an angle that only ever grows loses
+				// resolution in both.
+				float newYaw = (float) Math.IEEEremainder(
+					yawRadians - sideways * ShipConfig.TURN_SPEED, 2 * Math.PI);
 				ShipPose rotatedPose = new ShipPose(helmX, this.getY(), helmZ, newYaw);
 				if (!collision.checkCollisionAtRotation(this.level(), rotatedPose)
 						&& !collision.checkShipCollision(rotatedPose, otherShipHullPositions)) {
@@ -865,6 +979,14 @@ public class MultiBlockShipEntity extends Entity {
 
 		ShipPose tickPose = pose();
 
+		// A collision box that went missing since last tick leaves a hole in the deck; rebuilding
+		// the hull is the only way to put one back, and it is rare enough to afford.
+		if (collisionEntities.hasMissingCollision() && this.level() instanceof ServerLevel rebuildWorld) {
+			LOGGER.warn("A collision box went missing under a sailing ship — rebuilding the hull");
+			collisionEntities.clearMissingCollision();
+			collisionEntities.spawnAll(rebuildWorld, blocks, tickPose, collision.getHullBlocks());
+		}
+
 		// The collision and the furniture are placed AHEAD of the ship, by as far as it travels
 		// while a client is catching up to them.
 		//
@@ -905,6 +1027,30 @@ public class MultiBlockShipEntity extends Entity {
 	}
 
 	/**
+	 * Discard the collision hull a previous session left behind, once it can actually be found.
+	 *
+	 * <p>Runs in every state, because a ship that crashed while sailing comes back docked and its
+	 * orphans are no less solid for that. Gives up after a bounded wait so a genuinely vanished
+	 * entity is not asked after forever, and says so rather than going quiet.
+	 */
+	private void sweepOrphanedChildren() {
+		if (pendingOrphans.isEmpty() || !(this.level() instanceof ServerLevel world)) return;
+
+		pendingOrphans = collisionEntities.cleanupOrphanedEntities(world, pendingOrphans);
+		if (pendingOrphans.isEmpty()) {
+			orphanSweepTicks = 0;
+			return;
+		}
+
+		if (++orphanSweepTicks >= ShipConfig.ORPHAN_SWEEP_TICKS) {
+			LOGGER.warn("Gave up looking for {} collision entities from a previous session; "
+				+ "if any are still in the world they are invisible and solid", pendingOrphans.size());
+			pendingOrphans = List.of();
+			orphanSweepTicks = 0;
+		}
+	}
+
+	/**
 	 * Step off onto the deck, not into the sea.
 	 *
 	 * <p>Vanilla goes looking for solid ground beside the vehicle to put the passenger down on,
@@ -928,7 +1074,7 @@ public class MultiBlockShipEntity extends Entity {
 	@Override
 	protected void positionRider(Entity passenger, MoveFunction positionUpdater) {
 		if (this.hasPassenger(passenger)) {
-			// Entity position is already at the player seat (helmX + 0.5 + rotatedHelmOffset)
+			// Entity position is already at the player seat (see computeSeatWorldPos)
 			// calculated in tick(). No additional offset needed.
 			positionUpdater.accept(passenger, this.getX(), this.getY(), this.getZ());
 		}
@@ -949,7 +1095,7 @@ public class MultiBlockShipEntity extends Entity {
 		this.helmFacing = loaded.getAxis().isHorizontal() ? loaded : Direction.NORTH;
 
 		this.capacity = view.getIntOr("capacity", ShipConfig.MAX_BLOCKS);
-		this.floatTargetY = view.getDoubleOr("target_y", this.getY());
+		this.heldY = view.getDoubleOr("target_y", this.getY());
 
 		float savedYawDegrees = view.getFloatOr("ship_yaw", 0f);
 		this.yawRadians = (float) Math.toRadians(savedYawDegrees);
@@ -970,10 +1116,14 @@ public class MultiBlockShipEntity extends Entity {
 			setShipName(savedName);
 		}
 
-		List<UUID> oldUUIDs = new ArrayList<>(view.read("child_uuids", UUID_LIST_CODEC).orElse(List.of()));
-		if (this.level() instanceof ServerLevel serverWorld) {
-			collisionEntities.cleanupOrphanedEntities(serverWorld, oldUUIDs);
-		}
+		this.lock = view.read("lock", ShipLock.CODEC).orElse(null);
+
+		// Held for the tick to deal with, not swept here: during a load neither this ship nor the
+		// shulkers it is asking about are in the level's lookup yet, so every answer would be null
+		// and every orphan would be written off as already gone.
+		List<UUID> orphans = new ArrayList<>(view.read("child_uuids", UUID_LIST_CODEC).orElse(List.of()));
+		orphans.addAll(view.read("pending_orphans", UUID_LIST_CODEC).orElse(List.of()));
+		pendingOrphans = List.copyOf(orphans);
 
 		List<BlockPos> savedLightPositions = new ArrayList<>(view.read("light_pos", BLOCK_POS_LIST_CODEC).orElse(List.of()));
 		if (!savedLightPositions.isEmpty() && this.level() instanceof ServerLevel serverWorld) {
@@ -1010,7 +1160,7 @@ public class MultiBlockShipEntity extends Entity {
 		// backward compatibility. readAdditionalSaveData bounds-checks and guards horizontals.
 		view.putInt("helm_facing", helmFacing.ordinal());
 		view.putInt("capacity", capacity);
-		view.putDouble("target_y", floatTargetY);
+		view.putDouble("target_y", heldY);
 		view.putFloat("ship_yaw", (float) Math.toDegrees(yawRadians));
 		view.putDouble("helm_x", helmX);
 		view.putDouble("helm_z", helmZ);
@@ -1029,6 +1179,15 @@ public class MultiBlockShipEntity extends Entity {
 		List<UUID> childUUIDs = collisionEntities.getTrackedChildEntityUUIDs();
 		if (!childUUIDs.isEmpty()) {
 			view.store("child_uuids", UUID_LIST_CODEC, childUUIDs);
+		}
+
+		if (lock != null) {
+			view.store("lock", ShipLock.CODEC, lock);
+		}
+
+		// Carried across the save so a second crash mid-sweep does not lose the handle on them.
+		if (!pendingOrphans.isEmpty()) {
+			view.store("pending_orphans", UUID_LIST_CODEC, pendingOrphans);
 		}
 
 		List<BlockPos> lightPositions = lighting.getPlacedLightPositions();
@@ -1058,6 +1217,38 @@ public class MultiBlockShipEntity extends Entity {
 	public LivingEntity getControllingPassenger() {
 		Entity entity = this.getFirstPassenger();
 		return entity instanceof LivingEntity living ? living : null;
+	}
+
+	/**
+	 * The server says where this ship is, even with somebody at the wheel.
+	 *
+	 * <p>Naming a controlling passenger is how a boat asks for the opposite. Vanilla reads
+	 * "a player is steering it" as "that player's client owns its position", and hands the whole
+	 * vehicle over to them: the client stops accepting the server's positions for it outright
+	 * (see {@code ClientPacketListener.handleMoveEntity}, which drops the packet on the floor for
+	 * a locally authoritative entity) and starts sending its own back instead.
+	 *
+	 * <p>Which strands the pilot, because this ship has nothing to hand over. A boat is simulated
+	 * on the client that steers it; this hull is simulated here and nowhere else - the client's
+	 * copy never leaves {@link ShipState#DOCKED} and so never moves an inch. The deck the pilot
+	 * watches sail away is Pandorical's structure, posed straight from the helm; the entity they
+	 * are actually sitting on stayed at the quay with their camera on it, until they dismounted
+	 * and the server's word snapped them back aboard. Twenty blocks of sailing, nothing in the
+	 * log, and no client anywhere ever asked for the job.
+	 *
+	 * <p>A seated rider never had this: a cushion names no controlling passenger, so it is the
+	 * server's to move, and "a passenger goes where its vehicle goes" was true for them all along.
+	 * This says the same about the wheel. The pilot's steering does not need it - their input
+	 * arrives by {@code ServerboundPlayerInputPacket} whoever is deemed to own the hull.
+	 */
+	@Override
+	public boolean isClientAuthoritative() {
+		return false;
+	}
+
+	@Override
+	protected boolean isLocalClientAuthoritative() {
+		return false;
 	}
 
 	public List<ShipBlock> getBlocks() {

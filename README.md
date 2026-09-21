@@ -16,7 +16,7 @@ A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any
 - **Item frames and paintings** travel with the ship and restore on dock
 - **Doors, trapdoors, and fence gates** remain interactive while sailing
 - **Cushions** stay aboard while sailing, and sitting on one is a way to ride as a passenger. Docked, each is back on the block it was placed on, whichever way the ship now faces
-- With [chest-utils](../chest-utils) installed, a **painted chest** keeps its colour through a voyage
+- With [chest-utils](https://github.com/fatlard1993/chest-utils) installed, a **painted chest** keeps its colour through a voyage
 
 ### The Helm
 - Craft and place a **Helm block** as your ship's wheel
@@ -50,7 +50,7 @@ A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any
 
 ## Learning It
 
-Multiblock ships have no entry in any recipe book, no ore to find, and nothing in the world that hints they are possible. The first hull anyone builds is the one somebody told them they could build.
+The helm turns up in your recipe book as soon as you are holding planks, a stick or an iron ingot, which is the one hint the game gives you on its own. Nothing else points at ships: no ore to find, no structure to stumble on, and no way to guess that a helm turns the hull around it into a boat.
 
 So with [village-quests](https://github.com/fatlard1993/village-quests) installed, a fisherman who trusts you (50 reputation) will sell you the makings: 32 planks, a helm and a christening bottle for 24 emeralds, and the two recipes to go with them.
 
@@ -108,14 +108,14 @@ The rating is kept when the helm is placed, and a broken helm drops with its Ton
 - **Ship lighting**: Light-emitting blocks on ships place invisible light blocks that move with the ship
 - Collision checks all block corners to prevent clipping
 - Hull-only collision optimization skips interior blocks
-- Crash recovery: ships sailing when the server stops are force-docked on restart with all blocks restored
+- Crash recovery: ships sailing when the server stops are force-docked on restart with all blocks restored. A ship whose undock was interrupted part-way resolves to whichever side of that it had reached, rather than being saved mid-transition
 
 ## Pandorical
 
-Big Boats runs server-side, and Pandorical is required: the server will not load this mod without it. Three things route through it:
+Big Boats runs server-side, and [Pandorical](https://github.com/fatlard1993/pandorical) is required: the server will not load this mod without it. Three things route through it:
 
 - **Ship rendering**: a ship's blocks are drawn as a single batch-rendered Pandorical structure, posed and moved each tick to follow the ship. The ship entity itself uses Pandorical's `"invisible"` renderer and draws nothing; only the structure is visible.
-- **Walking the deck**: the ship's structure is marked walkable, so a Pandorical client stands its player on the deck it draws and carries them with it. Those players are left to their client: the server does not push them along, and the invisible collision it keeps for everything else is neither sent to them nor solid to them. An older Pandorical client is pushed along by the server as before.
+- **Walking the deck**: the ship's structure is marked walkable, so a Pandorical client stands its player on the deck it draws and carries them with it. Those players are left to their client: the server does not push them along, and the invisible collision it keeps for everything else is neither sent to them nor solid to them. This needs Pandorical 15 or newer on the client; there is no handshake and no fallback, so an older client sees no ship at all.
 - **Piloting camera**: pull-back distance and third-person-back perspective are pushed to the player through Pandorical's camera API on mount and dismount. A passenger sitting on a cushion gets a shorter pull-back than the pilot.
 
 Clients are not the optional half here. A ship is invisible without Pandorical, so a vanilla client cannot see or pilot one at all.
@@ -125,6 +125,11 @@ Clients are not the optional half here. A ship is invisible without Pandorical, 
 | Command | Permission | Description |
 |---------|-----------|-------------|
 | `/bigboats cleanup-lights` | GAMEMASTERS | Removes orphaned light blocks within 50 blocks of you. Active ships re-place theirs next tick. |
+| `/ship-lock lock` | everyone | Locks the ship you are on, or nearest to, so only you and your crew can sail it |
+| `/ship-lock unlock` | everyone | Opens it to anyone again |
+| `/ship-lock share <player>` | everyone | Lets someone else sail it |
+| `/ship-lock unshare <player>` | everyone | Takes that back |
+| `/ship-lock list` | everyone | Who owns it, whether it is locked, and who is aboard the crew |
 
 ## Known Limitations
 

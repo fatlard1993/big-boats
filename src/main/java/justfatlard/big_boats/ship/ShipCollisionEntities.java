@@ -16,6 +16,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,13 +44,7 @@ public class ShipCollisionEntities {
 
 	private Interaction helmInteraction;
 
-	private final List<UUID> trackedChildEntityUUIDs = new ArrayList<>();
-
-	// Tick-spreading: collision shulker updates
-	private int ticksSinceUpdate = 0;
-	private float lastUpdateYaw = 0;
-	private double lastUpdateX = 0;
-	private double lastUpdateZ = 0;
+	private final Set<UUID> trackedChildEntityUUIDs = new LinkedHashSet<>();
 
 	/**
 	 * Spawns collision shulkers for hull blocks and a helm interaction entity.
@@ -58,7 +53,10 @@ public class ShipCollisionEntities {
 	 */
 	public void spawnAll(ServerLevel world, List<ShipBlock> blocks, ShipPose pose,
 						 Collection<RelativeBlockPos> hullPositions) {
-		trackedChildEntityUUIDs.clear();
+		// Everything this spawns is tracked in four places; clearing one of them and spawning
+		// over the rest left the previous set alive and unreferenced, with no way back to it.
+		// Discarding first is the only clear that reaches all four.
+		discardAll();
 		int skipped = 0;
 
 		for (ShipBlock block : blocks) {
@@ -127,7 +125,14 @@ public class ShipCollisionEntities {
 	public void updatePositions(ShipPose pose) {
 		for (var entry : collisionShulkers.entrySet()) {
 			Shulker shulker = entry.getValue();
-			if (shulker.isRemoved()) continue;
+			// A shulker taken out from under us - by a chunk unload, a command, anything - used
+			// to be skipped here and never thought about again, leaving a one-block hole in the
+			// deck's collision that a rider standing on it falls straight through. It is noticed
+			// here and refilled by the next spawnAll; the hole no longer outlives the voyage.
+			if (shulker.isRemoved()) {
+				missingCollision = true;
+				continue;
+			}
 
 			// toWorld gives block corner; +0.5 on X/Z centers the shulker
 			Vec3 worldPos = pose.toWorld(entry.getKey());
@@ -141,59 +146,34 @@ public class ShipCollisionEntities {
 	}
 
 	/**
-	 * Checks whether collision positions need updating based on tick-spreading thresholds.
-	 * If update is needed, performs it and resets tracking state.
+	 * Move the collision hull to where the ship now is. Every tick, without asking.
 	 *
-	 * @return true if positions were updated
+	 * <p>It used to ask, against a yaw threshold, a distance threshold and a tick interval. The
+	 * interval is one, so the question always answered yes and the two thresholds decided nothing
+	 * - dead policy that still read as live, and would have come back wrong if anyone revived it,
+	 * because this is handed the lead pose and the thresholds were compared against the real one.
 	 */
-	public boolean tickUpdate(ShipPose pose) {
-		ticksSinceUpdate++;
-		boolean needsUpdate =
-			Math.abs(pose.yawRadians() - lastUpdateYaw) > ShipConfig.COLLISION_UPDATE_YAW_THRESHOLD ||
-			Math.abs(pose.helmX() - lastUpdateX) + Math.abs(pose.helmZ() - lastUpdateZ) > ShipConfig.COLLISION_UPDATE_POS_THRESHOLD ||
-			ticksSinceUpdate >= ShipConfig.COLLISION_UPDATE_TICK_INTERVAL;
-
-		if (needsUpdate) {
-			updatePositions(pose);
-			lastUpdateYaw = pose.yawRadians();
-			lastUpdateX = pose.helmX();
-			lastUpdateZ = pose.helmZ();
-			ticksSinceUpdate = 0;
-			return true;
-		}
-		return false;
+	public void tickUpdate(ShipPose pose) {
+		updatePositions(pose);
 	}
 
-	/**
-	 * Syncs tick-spread tracking state to current values.
-	 * Call after undocking or any position reset.
-	 */
-	public void syncTrackingState(double helmX, double helmZ, float yawRadians) {
-		lastUpdateYaw = yawRadians;
-		lastUpdateX = helmX;
-		lastUpdateZ = helmZ;
-		ticksSinceUpdate = 0;
-	}
-
-	/**
-	 * Removes shulkers for blocks no longer in the ship (e.g., broken while docked).
-	 */
+	/** For blocks broken off while the ship was docked. */
 	public void removeStaleShulkers(Set<RelativeBlockPos> survivingPositions) {
 		var iter = collisionShulkers.entrySet().iterator();
 		while (iter.hasNext()) {
 			var entry = iter.next();
 			if (!survivingPositions.contains(entry.getKey())) {
+				UUID id = entry.getValue().getUUID();
 				if (!entry.getValue().isRemoved()) entry.getValue().discard();
-				collisionShulkerUUIDs.remove(entry.getValue().getUUID());
+				collisionShulkerUUIDs.remove(id);
+				ALL_COLLISION_SHULKERS.remove(id);
+				trackedChildEntityUUIDs.remove(id);
 				iter.remove();
 			}
 		}
 	}
 
-	/**
-	 * Discards all collision shulkers and the helm interaction entity.
-	 * Call when docking (real blocks take over collision) or on entity removal.
-	 */
+	/** On docking, where real blocks take the collision back, and on removal. */
 	public void discardAll() {
 		for (Shulker shulker : collisionShulkers.values()) {
 			try {
@@ -222,17 +202,30 @@ public class ShipCollisionEntities {
 	}
 
 	/**
-	 * Cleans up orphaned entities from a previous session (crash recovery).
+	 * Discard what is left of a previous session's collision hull, and report what is still missing.
+	 *
+	 * <p>Called from the ship's tick rather than from its deserialisation, because a UUID resolves
+	 * against the level's live lookup and during a load the ship, its shulkers and the chunk they
+	 * share are all still arriving. Asked too early, every lookup returned null, which this read as
+	 * "already gone" - and the list was a local that died with the method, so the only record of
+	 * those entities went with it. What it leaves behind is a permanently invulnerable, invisible,
+	 * solid block per hull block, with no remaining handle to remove it, once per crash forever.
+	 *
+	 * @return the UUIDs that could not be resolved yet, to be asked about again
 	 */
-	public void cleanupOrphanedEntities(ServerLevel world, List<UUID> oldUUIDs) {
-		if (oldUUIDs.isEmpty()) return;
+	public List<UUID> cleanupOrphanedEntities(ServerLevel world, List<UUID> oldUUIDs) {
+		if (oldUUIDs.isEmpty()) return List.of();
 
+		List<UUID> unresolved = new ArrayList<>();
 		for (UUID uuid : oldUUIDs) {
 			Entity entity = world.getEntity(uuid);
-			if (entity != null && !entity.isRemoved()) {
+			if (entity == null) {
+				unresolved.add(uuid);
+			} else if (!entity.isRemoved()) {
 				entity.discard();
 			}
 		}
+		return List.copyOf(unresolved);
 	}
 
 	public boolean isHelmInteraction(Entity entity) {
@@ -248,6 +241,27 @@ public class ShipCollisionEntities {
 	private static final java.util.Set<UUID> ALL_COLLISION_SHULKERS =
 		java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+	/**
+	 * Whether a collision box has gone missing since the last time the hull was rebuilt.
+	 *
+	 * <p>Read by the ship each tick; see {@link #updatePositions}. Not repaired in place because
+	 * spawning inside a position loop would mutate the map being walked.
+	 */
+	public boolean hasMissingCollision() {
+		return missingCollision;
+	}
+
+	public void clearMissingCollision() {
+		missingCollision = false;
+	}
+
+	private boolean missingCollision = false;
+
+	/** Forget every known collision box. Called when the server stops; see {@code BigBoats}. */
+	public static void forgetAll() {
+		ALL_COLLISION_SHULKERS.clear();
+	}
+
 	/** Whether this entity is one of the invisible boxes holding a deck up. */
 	public static boolean isHullCollision(UUID id) {
 		return !ALL_COLLISION_SHULKERS.isEmpty() && ALL_COLLISION_SHULKERS.contains(id);
@@ -257,11 +271,20 @@ public class ShipCollisionEntities {
 		return collisionShulkerUUIDs.contains(entity.getUUID());
 	}
 
+	/** For saving. The per-tick question is {@link #ownsChildEntity}, which copies nothing. */
 	public List<UUID> getTrackedChildEntityUUIDs() {
 		return List.copyOf(trackedChildEntityUUIDs);
 	}
 
-	public Map<RelativeBlockPos, Shulker> getCollisionShulkers() {
-		return Collections.unmodifiableMap(collisionShulkers);
+	/**
+	 * Whether this entity is one the ship spawned.
+	 *
+	 * <p>Asked of every entity near the hull, every tick. It used to be asked by copying the whole
+	 * child list - one UUID per hull block, up to a couple of thousand - and scanning it, so the
+	 * cost of standing near a big ship was paid by the ship being big.
+	 */
+	public boolean ownsChildEntity(UUID id) {
+		return trackedChildEntityUUIDs.contains(id);
 	}
+
 }

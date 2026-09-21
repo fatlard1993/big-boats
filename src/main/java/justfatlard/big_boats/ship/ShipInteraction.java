@@ -42,13 +42,16 @@ public final class ShipInteraction {
 		for (int i = 0; i < blocks.size(); i++) {
 			ShipBlock block = blocks.get(i);
 
-			Vec3 worldPos = pose.toWorld(block.relativePos());
+			// The centre, and a box grown to the width the block presents at this heading. Built
+			// from the rotated corner outward instead, the box sat off the block by up to a fifth
+			// of a block on a diagonal heading, so a click near a boundary opened the neighbouring
+			// door - and, before the paint fix, stripped that one's colour too.
+			Vec3 centre = pose.toWorld(block.relativePos()).add(0.5, 0.5, 0.5);
+			double across = 0.5 * (Math.abs(Math.cos(pose.yawRadians())) + Math.abs(Math.sin(pose.yawRadians())));
 
-			double worldX = worldPos.x;
-			double worldY = worldPos.y;
-			double worldZ = worldPos.z;
-
-			AABB blockBox = new AABB(worldX, worldY, worldZ, worldX + 1, worldY + 1, worldZ + 1);
+			AABB blockBox = new AABB(
+				centre.x - across, centre.y - 0.5, centre.z - across,
+				centre.x + across, centre.y + 0.5, centre.z + across);
 
 			java.util.Optional<Vec3> hit = blockBox.clip(eyePos, eyePos.add(lookVec.scale(reach)));
 			if (hit.isPresent()) {
@@ -115,6 +118,10 @@ public final class ShipInteraction {
 		}
 
 		if (state.getBlock() instanceof FenceGateBlock) {
+			// A gate a redstone signal is holding does not open to a hand ashore, and putting it
+			// on a ship is not an argument that it should.
+			if (state.getValue(BlockStateProperties.POWERED)) return InteractionResult.PASS;
+
 			BlockState newState = state.cycle(BlockStateProperties.OPEN);
 			blockUpdater.update(blockIndex, newState);
 

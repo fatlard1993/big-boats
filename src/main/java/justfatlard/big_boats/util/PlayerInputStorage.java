@@ -22,6 +22,11 @@ public class PlayerInputStorage {
 		return playerInputs.getOrDefault(player.getUUID(), Input.EMPTY);
 	}
 
+	/** Forget everyone. Called when the server stops; this map is static and outlives a world. */
+	public static void forgetAll() {
+		playerInputs.clear();
+	}
+
 	public static void removePlayer(UUID playerId) {
 		playerInputs.remove(playerId);
 	}

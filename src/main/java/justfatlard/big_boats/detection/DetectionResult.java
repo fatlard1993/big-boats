@@ -1,6 +1,7 @@
 package justfatlard.big_boats.detection;
 
 import justfatlard.big_boats.ship.ShipBlock;
+import net.minecraft.core.BlockPos;
 import justfatlard.big_boats.ship.ShipConfig;
 import java.util.List;
 
@@ -14,6 +15,20 @@ public sealed interface DetectionResult {
 
 	sealed interface Failure extends DetectionResult {
 		String message();
+	}
+	/**
+	 * Part of the structure is in a chunk that is not loaded, so how big the ship is cannot be
+	 * known right now.
+	 *
+	 * <p>A failure and not a smaller {@link Success}, because the two are indistinguishable to
+	 * every caller and the consequences are not: a rescan that believes a truncated answer drops
+	 * every block it could not see, which severs a live ship and leaves the far half standing in
+	 * the world as orphaned geometry. Refusing costs a retry; believing costs the ship.
+	 */
+	record Unloaded(BlockPos at) implements Failure {
+		public String message() {
+			return "Part of the ship is in an unloaded chunk (" + at.toShortString() + ") — try again from closer";
+		}
 	}
 	record NoBlocks() implements Failure {
 		public String message() { return "No valid blocks found at helm position"; }

@@ -37,9 +37,6 @@ public record ShipBlock(RelativeBlockPos relativePos, BlockState blockState,
 		this(relativePos, blockState, blockEntityData, Optional.empty());
 	}
 
-	/**
-	 * Creates a ShipBlock from a world position, capturing block state and optional block entity data.
-	 */
 	public static ShipBlock fromWorld(Level world, BlockPos pos, BlockPos origin) {
 		BlockState state = world.getBlockState(pos);
 		RelativeBlockPos relativePos = RelativeBlockPos.fromWorldPos(pos, origin);

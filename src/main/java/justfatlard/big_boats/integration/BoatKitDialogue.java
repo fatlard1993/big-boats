@@ -3,7 +3,6 @@ package justfatlard.big_boats.integration;
 import justfatlard.big_boats.BigBoats;
 import justfatlard.village_quests.api.DialogueRegistry;
 import java.util.List;
-import net.minecraft.ChatFormatting;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -72,7 +71,11 @@ public final class BoatKitDialogue {
 				.walkAway("*count your pockets*");
 		}
 
-		takeEmeralds(player);
+		if (!takeEmeralds(player)) {
+			return DialogueRegistry.Reply.of("Something moved in your pockets while I was counting. Try me again.")
+				.walkAway("*frown*");
+		}
+
 		give(player, new ItemStack(Items.OAK_PLANKS, PLANKS));
 		give(player, new ItemStack(BigBoats.HELM_ITEM));
 		give(player, new ItemStack(BigBoats.CHRISTENING_BOTTLE));
@@ -96,16 +99,22 @@ public final class BoatKitDialogue {
 		return found;
 	}
 
-	private static void takeEmeralds(ServerPlayer player) {
+	/**
+	 * @return whether the full price was actually taken. The caller used to assume it was, on the
+	 *         strength of a count taken earlier in the same tick; anything that made the count and
+	 *         the take see different inventories handed out a free kit.
+	 */
+	private static boolean takeEmeralds(ServerPlayer player) {
 		int remaining = PRICE;
 		for (ItemStack stack : player.getInventory().getNonEquipmentItems()) {
-			if (remaining <= 0) return;
+			if (remaining <= 0) return true;
 			if (!stack.is(Items.EMERALD)) continue;
 
 			int taken = Math.min(remaining, stack.getCount());
 			stack.shrink(taken);
 			remaining -= taken;
 		}
+		return remaining <= 0;
 	}
 
 	private static void give(ServerPlayer player, ItemStack stack) {

@@ -31,9 +31,6 @@ public record RelativeBlockPos(int x, int y, int z) {
 
 	public static final RelativeBlockPos ORIGIN = new RelativeBlockPos(0, 0, 0);
 
-	/**
-	 * Creates a relative position from a world position and origin (helm position).
-	 */
 	public static RelativeBlockPos fromWorldPos(BlockPos worldPos, BlockPos origin) {
 		return new RelativeBlockPos(
 			worldPos.getX() - origin.getX(),
@@ -42,9 +39,6 @@ public record RelativeBlockPos(int x, int y, int z) {
 		);
 	}
 
-	/**
-	 * Converts this relative position to a world position given the ship's current position.
-	 */
 	public BlockPos toWorldPos(BlockPos shipOrigin) {
 		return new BlockPos(
 			shipOrigin.getX() + x,
@@ -53,9 +47,6 @@ public record RelativeBlockPos(int x, int y, int z) {
 		);
 	}
 
-	/**
-	 * Converts to a Vec3 offset for entity positioning.
-	 */
 	public Vec3 toVec3d() {
 		return new Vec3(x, y, z);
 	}

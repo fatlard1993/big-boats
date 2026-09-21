@@ -35,11 +35,32 @@ public class ShipLighting {
 	private record LightSource(RelativeBlockPos relativePos, int lightLevel) {}
 
 	private List<LightSource> lightSources = new ArrayList<>();
-	// Volatile: getPlacedLightPositions() is called from chunk-saving thread via writeCustomData.
-	// Reassigned (not mutated) in updatePositions and remove.
-	private volatile Set<BlockPos> placedLightPositions = Set.of();
-	/** Positions a light has moved off, cleared one update later so the two never gap. */
-	private volatile Set<BlockPos> pendingRemoval = Set.of();
+	/**
+	 * Every light block this ship is answerable for: the ones burning now, and the ones it has
+	 * moved off and not yet taken out.
+	 *
+	 * <p>One field, because the save thread reads both and the two together are the answer to
+	 * "what has this ship left in the world". Held apart, a save could land between the two
+	 * stores and record a set that was true of neither moment, and a crash then left light
+	 * blocks burning that nothing knew about.
+	 *
+	 * @param placed  lit now
+	 * @param retiring moved off, cleared one update later so the two never gap
+	 */
+	private record Lights(Set<BlockPos> placed, Set<BlockPos> retiring) {
+		static final Lights NONE = new Lights(Set.of(), Set.of());
+
+		/** Everything standing in the world, whichever half it is in. */
+		Set<BlockPos> all() {
+			Set<BlockPos> everywhere = new HashSet<>(placed);
+			everywhere.addAll(retiring);
+			return everywhere;
+		}
+	}
+
+	// Volatile: read from the chunk-saving thread by getPlacedLightPositions, reassigned (never
+	// mutated) here.
+	private volatile Lights lights = Lights.NONE;
 	private BlockPos lastLightUpdatePos = null;
 	private int lastLightUpdateYaw = 0;
 
@@ -75,7 +96,7 @@ public class ShipLighting {
 				newPositions.add(lightPos);
 			}
 		}
-		placedLightPositions = Set.copyOf(newPositions);
+		lights = new Lights(Set.copyOf(newPositions), Set.of());
 
 		lastLightUpdatePos = pose.helmBlockPos();
 		lastLightUpdateYaw = (int) Math.floor(Math.toDegrees(pose.yawRadians()) / 15) * 15;
@@ -100,7 +121,7 @@ public class ShipLighting {
 			if (existing.isAir()) {
 				world.setBlock(lightPos, wanted, Block.UPDATE_CLIENTS);
 				newPositions.add(lightPos);
-			} else if (placedLightPositions.contains(lightPos) && existing.is(Blocks.LIGHT)) {
+			} else if (lights.placed().contains(lightPos) && existing.is(Blocks.LIGHT)) {
 				// A light that has not moved is already exactly right, and this is where the
 				// flicker came from: it is not air, so it never made the new set, so the sweep
 				// below took it out as though it had been left behind - and the next update put it
@@ -119,33 +140,30 @@ public class ShipLighting {
 		// visibly. Letting the previous position linger through one cycle means there is never an
 		// instant when the ship is lit by fewer blocks than it should be, and the overlap costs a
 		// single extra light block, one block behind, on a ship that is moving anyway.
-		for (BlockPos pos : pendingRemoval) {
+		for (BlockPos pos : lights.retiring()) {
 			if (newPositions.contains(pos)) continue;
 			if (world.getBlockState(pos).is(Blocks.LIGHT)) {
 				world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
 			}
 		}
 
-		Set<BlockPos> retiring = new HashSet<>(placedLightPositions);
+		Set<BlockPos> retiring = new HashSet<>(lights.placed());
 		retiring.removeAll(newPositions);
-		pendingRemoval = Set.copyOf(retiring);
 
-		// Assign as immutable snapshot: safe for concurrent read by the chunk-saving thread
-		placedLightPositions = Set.copyOf(newPositions);
+		// Both sets in one store, because the saving thread reads them together: published
+		// separately, a save landing between the two wrote the old placed set and the new
+		// pending set, and every light in the gap was left burning with nothing recording it.
+		lights = new Lights(Set.copyOf(newPositions), Set.copyOf(retiring));
 
 		lastLightUpdatePos = pose.helmBlockPos();
 		lastLightUpdateYaw = (int) Math.floor(Math.toDegrees(pose.yawRadians()) / 15) * 15;
 	}
 
-	/**
-	 * Removes all placed light blocks.
-	 * Call when docking or removing the ship.
-	 */
+	/** On docking or removal, when no later update will come round to clear them. */
 	public void remove(ServerLevel world) {
 		// Both sets: a light the ship has moved off is still a light block standing in the world
 		// until its cycle comes round, and docking is exactly when that cycle never arrives.
-		Set<BlockPos> everywhere = new HashSet<>(placedLightPositions);
-		everywhere.addAll(pendingRemoval);
+		Set<BlockPos> everywhere = lights.all();
 
 		for (BlockPos pos : everywhere) {
 			BlockState state = world.getBlockState(pos);
@@ -153,29 +171,24 @@ public class ShipLighting {
 				world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
 			}
 		}
-		pendingRemoval = Set.of();
-		placedLightPositions = Set.of();
+		lights = Lights.NONE;
 		lightSources.clear();
 	}
 
-	/**
-	 * Returns a copy of the currently placed light positions.
-	 * Used for serialization before dock() clears them.
-	 */
+	/** For the save, which is the only record a crash leaves of what is still lit. */
 	public List<BlockPos> getPlacedLightPositions() {
 		// Both sets, because this is what a restart uses to find and clear the ship's lights, and a
 		// light waiting out its cycle is as real as any other.
-		Set<BlockPos> everywhere = new HashSet<>(placedLightPositions);
-		everywhere.addAll(pendingRemoval);
-		return List.copyOf(everywhere);
+		return List.copyOf(lights.all());
 	}
 
-	/**
-	 * Removes LIGHT blocks at the given positions.
-	 * Used for crash recovery when light positions were serialized but not cleaned up.
-	 */
+	/** Crash recovery: lights that were saved but never taken out of the world. */
 	public static void cleanupLightPositions(ServerLevel world, List<BlockPos> positions) {
 		for (BlockPos pos : positions) {
+			// Called while the ship is being loaded, so the chunks around it are mid-flight.
+			// Reading an absent one loads it, which is chunk loading re-entered from inside
+			// chunk loading; the ship asks again next tick through its own sweep.
+			if (!world.isLoaded(pos)) continue;
 			BlockState state = world.getBlockState(pos);
 			if (state.getBlock() == Blocks.LIGHT) {
 				world.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);

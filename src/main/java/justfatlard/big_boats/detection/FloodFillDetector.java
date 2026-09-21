@@ -29,16 +29,13 @@ public class FloodFillDetector {
 	private static final Logger LOGGER = LoggerFactory.getLogger(FloodFillDetector.class);
 
 	/**
-	 * Performs flood-fill detection starting from the helm position.
-	 * Includes any solid (non-air, non-liquid) connected block.
+	 * Walks out from the helm and returns everything solid connected to it.
 	 *
-	 * @param world The world to search in
-	 * @param helmPos The starting position (helm block)
-	 * @return DetectionResult containing all connected blocks or an error
-	 */
-	/**
-	 * @param maxBlocks what the helm at {@code helmPos} is rated to hold together; see
-	 *                  {@code ShipConfig.capacityForTonnage}
+	 * @param world the world to search
+	 * @param helmPos the helm to start from
+	 * @param maxBlocks what that helm is rated to hold together; see
+	 *                  {@link ShipConfig#capacityForTonnage}
+	 * @return the connected blocks, or why they could not be counted
 	 */
 	public static DetectionResult detect(Level world, BlockPos helmPos, int maxBlocks) {
 		List<ShipBlock> blocks = new ArrayList<>();
@@ -56,10 +53,12 @@ public class FloodFillDetector {
 		while (!queue.isEmpty() && found <= ShipConfig.SIZE_REPORT_LIMIT) {
 			BlockPos pos = queue.poll();
 
-			// Skip positions in unloaded chunks: getBlockState returns air there,
-			// which would silently truncate ships at chunk borders
+			// Stop, rather than step over it. Skipping the position skipped its neighbours too,
+			// so the walk simply ended at the chunk border and returned a partial ship that no
+			// caller could tell from a whole one - the truncation the old comment here claimed
+			// to be preventing.
 			if (!world.isLoaded(pos)) {
-				continue;
+				return new DetectionResult.Unloaded(pos);
 			}
 
 			BlockState state = world.getBlockState(pos);
@@ -100,18 +99,24 @@ public class FloodFillDetector {
 	}
 
 	/**
-	 * Detects if a ship at the given positions is grounded (connected to land).
-	 * If connected to a small mass (<= available capacity), returns those blocks to absorb.
-	 * If connected to a large mass, returns grounded status.
+	 * Whether this ship is resting on something it cannot simply sail off.
+	 *
+	 * <p>A verdict, not a list of blocks: every {@link GroundingResult} variant is an empty
+	 * record, and what actually gets absorbed is decided later, by the rescan.
 	 *
 	 * @param world The world to search in
 	 * @param shipPositions The current world positions of ship blocks
 	 * @param currentShipSize Current number of blocks in the ship
+	 * @param maxBlocks what this ship's helm is rated to hold, the same figure {@code detect} is
+	 *                  given. Measured against the global ceiling instead, a plain helm rated for
+	 *                  a hundred blocks was told it had room for nineteen hundred more, so a
+	 *                  player was cleared to leave and then lost the surplus at the rescan cap.
 	 * @param referencePos A reference position for calculating relative positions (usually helm)
 	 * @return GroundingResult indicating grounding status and any absorbable blocks
 	 */
-	public static GroundingResult detectGrounding(Level world, Set<BlockPos> shipPositions, int currentShipSize, BlockPos referencePos) {
-		int availableCapacity = ShipConfig.MAX_BLOCKS - currentShipSize;
+	public static GroundingResult detectGrounding(Level world, Set<BlockPos> shipPositions,
+			int currentShipSize, int maxBlocks, BlockPos referencePos) {
+		int availableCapacity = maxBlocks - currentShipSize;
 
 		// Find all solid blocks the ship actually touches that aren't part of the ship.
 		//
@@ -150,10 +155,23 @@ public class FloodFillDetector {
 			}
 		}
 
-		while (!queue.isEmpty() && visited.size() < ShipConfig.MAX_BLOCKS * 2) {
+		// Counted apart from `visited`, which starts holding the whole ship: sharing them gave a
+		// fifty-block ship four thousand positions of exploration and a two-thousand-block ship
+		// two thousand, so grounding detection was least reliable for the ships most likely to
+		// be aground.
+		int explored = 0;
+		while (!queue.isEmpty() && explored < ShipConfig.MAX_BLOCKS * 2) {
+			explored++;
 			BlockPos pos = queue.poll();
 
 			if (Math.abs(pos.getY() - referencePos.getY()) > ShipConfig.MAX_GROUNDING_Y_RANGE) {
+				continue;
+			}
+
+			// Unloaded ground is not ground we can judge, and reading it would load the chunk:
+			// getBlockState loads if absent, so an unguarded walk of a few thousand positions can
+			// generate terrain on the server thread while a player waits.
+			if (!world.isLoaded(pos)) {
 				continue;
 			}
 
@@ -164,7 +182,9 @@ public class FloodFillDetector {
 			}
 
 			connectedCount++;
-			if (connectedCount >= availableCapacity) {
+			// Strictly greater: a landmass of exactly the capacity left fits, and refusing it
+			// told a player their ship was too full for a rock it had room for.
+			if (connectedCount > availableCapacity) {
 				return new GroundingResult.GroundedTooLarge();
 			}
 

@@ -19,7 +19,14 @@ public class ServerGamePacketListenerMixin {
 	@Shadow
 	public ServerPlayer player;
 
-	@Inject(method = "handlePlayerInput", at = @At("HEAD"))
+	// After the thread hop, not at HEAD. PacketUtils.ensureRunningOnSameThread reschedules the
+	// packet onto the server thread by throwing, so a HEAD injection runs once on the Netty I/O
+	// thread and again on the server thread when the packet is re-handled - writing shared state
+	// from a thread that has no business holding it, and doing everything twice.
+	@Inject(method = "handlePlayerInput",
+		at = @At(value = "INVOKE",
+			target = "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/server/level/ServerLevel;)V",
+			shift = At.Shift.AFTER))
 	private void capturePlayerInput(ServerboundPlayerInputPacket packet, CallbackInfo ci) {
 		if (player != null) {
 			PlayerInputStorage.setInput(player.getUUID(), packet.input());

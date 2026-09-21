@@ -10,7 +10,7 @@ Any player-built structure becomes a sailable ship with no block or inventory lo
 
 This is not a naval warfare mod. Not a tech mod. Not a framework. It's the simplest possible answer to "I built a ship, why can't I sail it?"
 
-The core features are built, including ship-to-ship collision. The mod is in hardening: tightening the no-loss contract, multiplayer testing, and closing edge cases that solo testing doesn't find.
+The core features are built, including ship-to-ship collision. Work since has gone both ways: new growth (walkable decks, reefs, painted chests, one pivot for everything that turns) alongside hardening the no-loss contract. What is still owed is multiplayer testing and the edge cases solo testing does not find.
 
 ## Who It's For
 
@@ -48,6 +48,8 @@ Players who build ships and want to use them. Throw the bottle, sail the ship.
 The ship entity delegates behavior to focused components, all receiving a `ShipPose` to transform coordinates:
 
 - **ShipPhysics**: velocity, acceleration, drag. Stateful (owns velocity).
+- **ShipRiders**: everything standing on the deck, carried by velocity rather than by teleport so a rider keeps control of their own feet. Stateful (remembers who is aboard, and where on the deck).
+- **ShipSeats**: the cushions a ship carries, and the seated riders who ride them as passengers. Stateful (owns the seat list).
 - **ShipCollision**: hull block computation and world collision checks. Stateful (owns hull set).
 - **ShipCollisionEntities**: invisible shulker lifecycle for server-side collision, plus helm interaction entity. Stateful.
 - **ShipLighting**: light-emitting block detection and invisible light block placement/movement. Stateful.
@@ -72,4 +74,4 @@ Ranked by impact:
 
 3. **Architecture cleanup.** Serialization could move to a codec helper.
 
-4. **Performance measurement.** The hull optimization and tick-spreading are in place but not benchmarked. Ship-to-ship collision queries are O(n*m) per tick per ship and uncached; need profiling under load with multiple active ships. Need actual numbers before raising the block limit or claiming server-friendly.
+4. **Performance measurement.** The hull optimization is in place but not benchmarked. Ship-to-ship collision queries are O(n*m) per tick per ship; the hull positions behind them are memoised per tick, the queries themselves are not. Tick-spreading for the collision hull has been removed - it never fired, because its interval was one. Need actual numbers before raising the block limit or claiming server-friendly.

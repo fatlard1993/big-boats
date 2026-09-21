@@ -128,7 +128,8 @@ public class ChristeningBottleEntity extends ThrowableItemProjectile {
 				}
 			}
 		}
-		var groundingResult = FloodFillDetector.detectGrounding(serverWorld, shipPositions, success.blockCount(), helmPos);
+		var groundingResult = FloodFillDetector.detectGrounding(
+			serverWorld, shipPositions, success.blockCount(), capacity, helmPos);
 		if (!groundingResult.canUndock()) {
 			failChristening(serverWorld, targetPos, "Ship is connected to land - disconnect it first!");
 			return;
@@ -195,7 +196,9 @@ public class ChristeningBottleEntity extends ThrowableItemProjectile {
 			10, 0.2, 0.2, 0.2, 0.02
 		);
 
-		this.spawnAtLocation(world, BigBoats.CHRISTENING_BOTTLE);
+		// The stack, not a fresh item: a bottle someone took the trouble to name is the same
+		// bottle after a miss, and dropping a bare item quietly threw the name away.
+		this.spawnAtLocation(world, this.getItem().copy());
 
 		LOGGER.debug("Christening failed at {}: {}", pos, errorMessage);
 
@@ -249,6 +252,13 @@ public class ChristeningBottleEntity extends ThrowableItemProjectile {
 			helmFacing
 		);
 		ship.setCapacity(justfatlard.big_boats.block.HelmBlock.capacityAt(world, helmPos));
+		if (this.getOwner() instanceof ServerPlayer christener) {
+			// Owned from the first moment, and unlocked until its owner says otherwise: the lock
+			// has somebody to belong to without changing who can sail it.
+			ship.setLock(justfatlard.big_boats.ship.ShipLock
+				.of(christener.getUUID(), christener.getGameProfile().name())
+				.published(true));
+		}
 
 		// Transfer custom name from christening bottle to ship
 		ItemStack bottleStack = this.getItem();
