@@ -3,6 +3,11 @@
 		"Build a ship out of ordinary blocks, put a helm on it, christen it with a bottle and sail the whole thing away as one vessel."
 	],
 	"versions": {
+		"1.1.1": [
+			"A block added to a ship keeps the way it was laid when the ship docks again.",
+			"Stairs, logs and anything else with a facing came back turned by the ship's own heading.",
+			"A ship that had never been turned was unaffected, which is why it took a while to show."
+		],
 		"1.1.0": [
 			"Ships lock the way chests do. /ship-lock makes the ship you are standing on yours.",
 			"Share lets a crew take the helm; anyone else is kept off it and off its blocks.",

@@ -537,6 +537,8 @@ public class MultiBlockShipEntity extends Entity {
 		ShipBlockUtils.SnappedRotation snap = ShipBlockUtils.snappedRotation(yawDegrees);
 		int cos = snap.cos();
 		int sin = snap.sin();
+		net.minecraft.world.level.block.Rotation inverseRotation =
+			ShipBlockUtils.yawToBlockRotation(-snap.yawDegrees());
 
 		// Build set of world positions for current blocks and reverse lookup
 		Set<BlockPos> currentWorldPositions = new HashSet<>();
@@ -614,7 +616,13 @@ public class MultiBlockShipEntity extends Entity {
 				RelativeBlockPos newRelPos =
 					ShipBlockUtils.worldToRelative(worldDeltaX, worldDeltaY, worldDeltaZ, cos, sin);
 
-				ShipBlock newBlock = new ShipBlock(newRelPos, detectedBlock.blockState(), detectedBlock.blockEntityData());
+				// The state is un-turned the same way the position is. A ShipBlock holds the ship's
+				// own orientation, and dock() turns it back into the world's; a block absorbed here
+				// is read standing in the world, so storing it as it stands would have it turned
+				// twice - stairs added to a ship lying east came back facing south.
+				BlockState localState = detectedBlock.blockState().rotate(inverseRotation);
+
+				ShipBlock newBlock = new ShipBlock(newRelPos, localState, detectedBlock.blockEntityData());
 				newBlocks.add(newBlock);
 			}
 		}
