@@ -125,6 +125,8 @@ publishing {
 // postage stamp in the top left corner. Size the window to the picture instead, and run under an
 // xvfb screen at least as big: xvfb-run -a -s "-screen 0 2048x1152x24" ./gradlew runClientGameTest
 tasks.matching { it.name == "runClientGameTest" }.configureEach {
+	// Silent: OpenAL's null device, the same as gametest.gradle gives the rest of the suite.
+	environment("ALSOFT_DRIVERS", "null")
 	args("--width", "1920", "--height", "1080")
 }
 
