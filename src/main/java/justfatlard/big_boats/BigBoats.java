@@ -6,7 +6,6 @@ import net.minecraft.world.item.enchantment.Enchantment;
 import justfatlard.big_boats.block.HelmBlockEntity;
 import justfatlard.big_boats.ship.MultiBlockShipEntity;
 import justfatlard.big_boats.ship.ShipConfig;
-import justfatlard.big_boats.ship.ShipInteraction;
 import justfatlard.big_boats.util.PlayerInputStorage;
 import justfatlard.pandorical.api.BlockRegistration;
 import justfatlard.pandorical.api.ItemRegistration;
@@ -34,7 +33,6 @@ import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.MobCategory;
-import net.minecraft.world.entity.monster.Shulker;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
@@ -42,7 +40,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockBehaviour;
-import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -198,25 +195,15 @@ public class BigBoats implements ModInitializer {
 				}
 			}
 
-			// Handle block interactions on moving ships (doors, trapdoors, fence gates)
-			if (entity instanceof Shulker && player instanceof ServerPlayer) {
-				Entity vehicle = player.getVehicle();
-				if (vehicle instanceof MultiBlockShipEntity ship && !ship.isDocked()) {
-					if (ship.isCollisionShulker(entity)) {
-						int blockIndex = ShipInteraction.findLookedAtBlock(
-							player, ship.getBlocks(), ship.pose());
-						if (blockIndex >= 0) {
-							return ShipInteraction.tryInteractWithBlock(
-								ship.getBlocks(), blockIndex, world,
-								new Vec3(entity.getX(), entity.getY(), entity.getZ()),
-								ship::updateShipBlock);
-						}
-					}
-				}
-			}
-
 			return InteractionResult.PASS;
 		});
+
+		// A door, chest, furnace or anvil aboard a ship at sea, used by anyone on her deck: the
+		// block's own handling, in her stretch of the world. See ship/sea/AtSea.
+		PandoricalApi.structures().onBlockUse((player, anchor, structureId, pos, state) ->
+			anchor instanceof MultiBlockShipEntity ship && ship.getHold() != null
+				? ship.getHold().use(player, new justfatlard.big_boats.util.RelativeBlockPos(pos.x(), pos.y(), pos.z()))
+				: InteractionResult.PASS);
 
 		ShipLockCommand.register();
 
@@ -240,6 +227,11 @@ public class BigBoats implements ModInitializer {
 
 		// Tick-spread listener for cleanup-lights command (registered once, checks flag each tick)
 		ServerTickEvents.END_SERVER_TICK.register(BigBoats::tickCleanup);
+
+		// Before the worlds are saved: what is in use at sea goes back into each ship, so she is
+		// saved holding it, and the stretches are emptied for the next world.
+		net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPING.register(server ->
+			justfatlard.big_boats.ship.sea.AtSea.closeAll());
 
 		// Three static registries and a half-finished sweep, all of which outlive a world that
 		// is only unloaded rather than exited. In single player that means the next world starts

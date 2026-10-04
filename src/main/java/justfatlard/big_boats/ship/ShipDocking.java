@@ -227,6 +227,9 @@ public class ShipDocking {
 				newDockedPositions.add(worldPos);
 
 				block.paint().ifPresent(colour -> DyedChestPaint.lay(world, worldPos, colour));
+				if (rotatedState.hasBlockEntity()) {
+					justfatlard.big_boats.integration.ChestLockCarry.lay(world, worldPos, block.lock().orElse(null));
+				}
 
 				if (block.hasBlockEntityData()) {
 					CompoundTag savedNbt = block.blockEntityData().get();
@@ -341,6 +344,11 @@ public class ShipDocking {
 						updatedBlocks.set(painted, updatedBlocks.get(painted).withPaint(paint));
 					}
 				}
+				// Its lock goes with it too, lifted while there is still a chest here to lift it from;
+				// and a chest with none now carries none, though it had one the last time she sailed.
+				net.minecraft.nbt.CompoundTag lock = justfatlard.big_boats.integration.ChestLockCarry.lift(world, pos);
+				Integer locked = posToBlockIndex.get(pos);
+				if (locked != null) updatedBlocks.set(locked, updatedBlocks.get(locked).withLock(lock));
 
 				BlockEntity blockEntity = world.getBlockEntity(pos);
 				if (blockEntity != null) {

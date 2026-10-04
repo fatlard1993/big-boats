@@ -10,7 +10,12 @@
     "HullCollisionUnsentMixin",
     "HangingEntityAccessor",
     "InteractionAccessor",
-    "ServerGamePacketListenerMixin"
+    "ServerGamePacketListenerMixin",
+    "AtSeaLevelMixin",
+    "AtSeaBlockEntityMixin",
+    "AtSeaReachMixin",
+    "AtSeaSoundMixin",
+    "AtSeaTicksMixin"
   ],
   "injectors": {
     "defaultRequire": 1

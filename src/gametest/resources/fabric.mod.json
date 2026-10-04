@@ -8,6 +8,11 @@
 	"environment": "*",
 	"entrypoints": {
 		"fabric-client-gametest": [
+			"justfatlard.big_boats.gametest.LaddersAtSea",
+			"justfatlard.big_boats.gametest.LootStaysTaken",
+			"justfatlard.big_boats.gametest.WorksAtSea",
+			"justfatlard.big_boats.gametest.LocksAndLootAtSea",
+			"justfatlard.big_boats.gametest.UnderWay",
 			"justfatlard.big_boats.gametest.PilotFollowsShip",
 			"justfatlard.big_boats.gametest.Showcase"
 		]

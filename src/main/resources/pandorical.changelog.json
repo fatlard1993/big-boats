@@ -3,6 +3,15 @@
 		"Build a ship out of ordinary blocks, put a helm on it, christen it with a bottle and sail the whole thing away as one vessel."
 	],
 	"versions": {
+		"1.2.0": [
+			"A ship at sea is still a working ship: her doors, trapdoors and gates swing, her chests, barrels and shulker boxes open, and her crafting table, anvil, enchanting table, loom and the rest work at sea.",
+			"Furnaces, smokers, blast furnaces and brewing stands keep going while she sails, and hoppers keep feeding them.",
+			"Bells ring and note blocks play from the deck.",
+			"A locked chest stays locked at sea and is still locked, to the same owner, wherever she docks.",
+			"A loot chest aboard opens as each player's own copy, at sea as ashore.",
+			"Ladders and vines climb at sea.",
+			"Clicking blocks on a ship at sea needs Pandorical 15.13 on the client."
+		],
 		"1.1.1": [
 			"A block added to a ship keeps the way it was laid when the ship docks again.",
 			"Stairs, logs and anything else with a facing came back turned by the ship's own heading.",

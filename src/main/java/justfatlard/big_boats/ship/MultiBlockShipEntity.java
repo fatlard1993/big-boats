@@ -109,6 +109,8 @@ public class MultiBlockShipEntity extends Entity {
 	private final ShipCollisionEntities collisionEntities = new ShipCollisionEntities();
 
 	private final ShipDocking docking = new ShipDocking();
+	/** Her blocks' stretch of the world while she sails, so they work at sea; null in port. */
+	private justfatlard.big_boats.ship.sea.Hold hold;
 	private final ShipSeats seats = new ShipSeats();
 	private final ShipRiders riders = new ShipRiders();
 
@@ -305,6 +307,17 @@ public class MultiBlockShipEntity extends Entity {
 			LOGGER.error("Failed to settle riders or cushions while docking — placing the hull anyway", e);
 		}
 
+		// Every chest, furnace and screen at sea is written back to her blocks before they go down.
+		// Guarded like the riders: what runs here is other mods' screens and block entities, and a
+		// throw past this point would leave her docked with her hull in no world at all.
+		try {
+			justfatlard.big_boats.ship.sea.AtSea.close(hold);
+		} catch (RuntimeException e) {
+			LOGGER.error("Failed writing back what was in use at sea while docking — placing the hull anyway", e);
+		} finally {
+			hold = null;
+		}
+
 		ShipDocking.DockStats stats = docking.placeBlocks(world, blocks, helmX, this.getY(), helmZ, snap);
 
 		// A block that could not be set down was handed back as an item. It is not the ship's any
@@ -446,6 +459,8 @@ public class MultiBlockShipEntity extends Entity {
 
 		lighting.detectFromBlocks(blocks);
 		lighting.spawnLightBlocks(world, currentPose);
+
+		hold = justfatlard.big_boats.ship.sea.AtSea.open(this, world);
 
 		LOGGER.debug("Undock complete: {} blocks, lighting={}", blocks.size(), lighting.hasLightSources());
 		return true;
@@ -821,6 +836,36 @@ public class MultiBlockShipEntity extends Entity {
 		PandoricalApi.camera().setPerspective(player, "third_person_back");
 	}
 
+	/** A block gone from her at sea - an anvil worn through - taken off her blocks and her hull. */
+	public void removeShipBlock(int index) {
+		List<ShipBlock> current = blocks;
+		if (index < 0 || index >= current.size() || current.get(index).isHelm()) return;
+		RelativeBlockPos gone = current.get(index).relativePos();
+		List<ShipBlock> updated = new ArrayList<>(current);
+		updated.remove(index);
+		blocks = List.copyOf(updated);
+		collision.computeHullBlocks(blocks);
+		Set<RelativeBlockPos> surviving = new HashSet<>();
+		for (ShipBlock block : blocks) surviving.add(block.relativePos());
+		collisionEntities.removeStaleShulkers(surviving);
+		if (structure != null) structure.removeBlocks(List.of(gone));
+	}
+
+	/** Her blocks, edited in one copy: what her block entities hold and the locks on them, as they stand at sea. */
+	public void editBlocks(java.util.function.Consumer<List<ShipBlock>> edit) {
+		List<ShipBlock> updated = new ArrayList<>(blocks);
+		edit.accept(updated);
+		blocks = List.copyOf(updated);
+	}
+
+		/** A block aboard began or stopped giving light - a furnace lit - so her lights are set again. */
+	public void refreshLights() {
+		if (!(this.level() instanceof ServerLevel world) || state != ShipState.SAILING) return;
+		lighting.remove(world);
+		lighting.detectFromBlocks(blocks);
+		lighting.spawnLightBlocks(world, pose());
+	}
+
 	/**
 	 * Builds a new immutable block list; safe for concurrent read by the chunk-saving thread.
 	 */
@@ -829,8 +874,7 @@ public class MultiBlockShipEntity extends Entity {
 		if (index >= 0 && index < current.size()) {
 			ShipBlock oldBlock = current.get(index);
 			List<ShipBlock> updated = new ArrayList<>(current);
-			updated.set(index, new ShipBlock(oldBlock.relativePos(), newState,
-				oldBlock.blockEntityData(), oldBlock.paint()));
+			updated.set(index, oldBlock.withState(newState));
 			blocks = List.copyOf(updated);
 
 			if (structure != null) {
@@ -855,6 +899,12 @@ public class MultiBlockShipEntity extends Entity {
 			this.discard();
 			return;
 		}
+
+		if (hold == null && this.level() instanceof ServerLevel sailingIn) {
+			// A ship that came back from a save still at sea: her stretch is made on her first tick.
+			hold = justfatlard.big_boats.ship.sea.AtSea.open(this, sailingIn);
+		}
+		if (hold != null) hold.tick();
 
 		// A ship holds the height it was christened at, and nothing moves it but its own
 		// collision.
@@ -1259,6 +1309,16 @@ public class MultiBlockShipEntity extends Entity {
 		return false;
 	}
 
+	/** Her blocks' stretch of the world while she sails; null in port. */
+	/** Her stretch was handed back for her, the server stopping. */
+	public void stretchClosed(justfatlard.big_boats.ship.sea.Hold closed) {
+		if (hold == closed) hold = null;
+	}
+
+	public justfatlard.big_boats.ship.sea.Hold getHold() {
+		return hold;
+	}
+
 	public List<ShipBlock> getBlocks() {
 		return Collections.unmodifiableList(blocks);
 	}
@@ -1377,6 +1437,24 @@ public class MultiBlockShipEntity extends Entity {
 		LOGGER.info("Docked ship '{}' has lost its helm at {}; releasing its {} blocks",
 			shipName != null ? shipName : "unnamed", helmPos, blocks.size());
 		this.discard();
+	}
+
+	/**
+	 * Unloaded with her chunk, or gone to another dimension, while at sea: her stretch is handed
+	 * back. She is saved as sailing and docks wherever she next loads.
+	 */
+	@Override
+	public void onRemoval(RemovalReason reason) {
+		super.onRemoval(reason);
+		if (hold != null) {
+			try {
+				justfatlard.big_boats.ship.sea.AtSea.close(hold);
+			} catch (RuntimeException e) {
+				LOGGER.error("Failed handing back a ship's stretch at sea as she was removed", e);
+			} finally {
+				hold = null;
+			}
+		}
 	}
 
 	@Override

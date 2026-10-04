@@ -138,3 +138,22 @@ fabricApi {
 		eula = true
 	}
 }
+
+// The game tests sail a locked chest and a loot chest, so they load the two mods that make them so.
+// Test-only: the mod itself still only suggests either.
+dependencies {
+	for (String mod : ["chest-utils", "loot-ender"]) {
+		def properties = file("../${mod}/gradle.properties")
+		if (!properties.exists()) continue
+		def version = new Properties().with {
+			properties.withInputStream { load(it) }
+			getProperty("mod_version")
+		}
+		def jar = file("../${mod}/build/libs/${mod}-${version}.jar")
+		if (!jar.exists()) {
+			throw new GradleException("The game tests load ${jar.name}: run `mc-build ${mod}` (or ./gradlew build in ../${mod}) first.")
+		}
+		gametestCompileOnly files(jar)
+		gametestRuntimeOnly files(jar)
+	}
+}

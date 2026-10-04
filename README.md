@@ -40,6 +40,18 @@ A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any
 - **Coral and loose rock give way**: coral, coral fans and sea pickles are knocked aside like kelp, and natural terrain (coral block, stone, dirt, sand, gravel, clay, sandstone, magma) held on by no more than two faces breaks when the hull hits it, so reefs and shallows can be threaded. Anything more firmly set, or built rather than grown, stops the ship
 - A ship holds the height it was christened at
 
+### Working at Sea
+A ship at sea is still a working ship. Walk her deck and use what is on it the way you would ashore:
+- **Doors, trapdoors and fence gates** open and shut
+- **Chests, barrels, shulker boxes, dispensers, droppers, hoppers, crafters and lecterns** open, and what you put in comes ashore with her
+- **Crafting tables, anvils, stonecutters, smithing tables, grindstones, looms and cartography tables** work, and an **enchanting table** counts the bookshelves aboard
+- **Furnaces, smokers, blast furnaces and brewing stands** keep cooking while she sails, and **hoppers** keep feeding them
+- **Bells** ring and **note blocks** play
+- **Ladders and vines** climb
+- A chest locked with [Chest Utils](https://github.com/fatlard1993/chest-utils) 1.1.1 or newer stays locked at sea and is still locked to its owner wherever she docks, and a [Loot Ender](https://github.com/fatlard1993/loot-ender) loot chest aboard opens as each player's own copy
+
+Clicking blocks at sea needs Pandorical 15.13 or newer on the client. Other mods' blocks join in through the `pandorical:usable_on_structures` block tag (to be clicked) and `big-boats-justfatlard:ticks_at_sea` (to keep running while she sails).
+
 ### Docking System
 - Ships **auto-dock** when you dismount (places real blocks back)
 - Ships **auto-undock** when you board (converts to a rendered Pandorical structure)
@@ -108,6 +120,7 @@ The rating is kept when the helm is placed, and a broken helm drops with its Ton
 - **Ship lighting**: Light-emitting blocks on ships place invisible light blocks that move with the ship
 - Collision checks all block corners to prevent clipping
 - Hull-only collision optimization skips interior blocks
+- **Blocks at sea**: while a ship sails, her blocks answer from coordinates far above any build height (y 1600 and up, x from 30,000,000), one stretch per ship. Nothing is placed there and no chunk loads; it is where a log line about a block at sea will point
 - Crash recovery: ships sailing when the server stops are force-docked on restart with all blocks restored. A ship whose undock was interrupted part-way resolves to whichever side of that it had reached, rather than being saved mid-transition
 
 ## Pandorical
@@ -133,9 +146,8 @@ Clients are not the optional half here. A ship is invisible without Pandorical, 
 
 ## Known Limitations
 
-- Ladders don't function for climbing while sailing
+- Blocks that need a redstone signal, or that grow, wait until she docks
 - Single driver only
-- No ship ownership model (any player can mount any ship)
 
 ## Development
 
