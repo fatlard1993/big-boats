@@ -39,7 +39,7 @@ public final class LocksAndLootAtSea implements FabricClientGameTest {
 			TestServerContext server = world.getServer();
 			TestServerConnection connection = world.getConnection();
 			connection.waitForChunksRender();
-			server.runCommand("gamerule doDaylightCycle false");
+			server.runCommand("gamerule advance_time false");
 			// Loot Ender locks some loot chests behind a lockpicking game; this is about whose loot
 			// it is, not the lock, so the locks are off.
 			server.runOnServer(s -> justfatlard.loot_ender.LootEnderConfig.setLockpicking(false));

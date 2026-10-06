@@ -32,8 +32,8 @@ public final class Showcase implements FabricClientGameTest {
 			connection.waitForChunksRender();
 
 			context.getInput().pressKey(options -> options.keyToggleGui);
-			server.runCommand("gamerule doDaylightCycle false");
-			server.runCommand("gamerule doWeatherCycle false");
+			server.runCommand("gamerule advance_time false");
+			server.runCommand("gamerule advance_weather false");
 			server.runCommand("weather clear");
 			server.runCommand("time set 1000");
 			// Spectator, or the camera falls into the sea between the teleport and the shutter.

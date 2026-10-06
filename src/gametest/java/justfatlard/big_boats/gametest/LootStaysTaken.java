@@ -25,7 +25,7 @@ public final class LootStaysTaken implements FabricClientGameTest {
 			TestServerContext server = world.getServer();
 			TestServerConnection connection = world.getConnection();
 			connection.waitForChunksRender();
-			server.runCommand("gamerule doDaylightCycle false");
+			server.runCommand("gamerule advance_time false");
 			server.runCommand("gamemode spectator @a");
 
 			BlockPos origin = server.computeOnServer(s -> connection.getServerPlayer().blockPosition());

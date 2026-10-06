@@ -60,8 +60,8 @@ public final class PilotFollowsShip implements FabricClientGameTest {
 			TestServerConnection connection = world.getConnection();
 			connection.waitForChunksRender();
 
-			server.runCommand("gamerule doDaylightCycle false");
-			server.runCommand("gamerule doWeatherCycle false");
+			server.runCommand("gamerule advance_time false");
+			server.runCommand("gamerule advance_weather false");
 			server.runCommand("weather clear");
 			server.runCommand("time set 1000");
 			server.runCommand("gamemode spectator @a");
