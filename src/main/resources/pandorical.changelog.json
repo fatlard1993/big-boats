@@ -3,6 +3,9 @@
 		"Build a ship out of ordinary blocks, put a helm on it, christen it with a bottle and sail the whole thing away as one vessel."
 	],
 	"versions": {
+		"1.2.1": [
+			"A Ship action menu: who's crew, lock, unlock, and sharing with or taking back from players picked by face."
+		],
 		"1.2.0": [
 			"A ship at sea is still a working ship: her doors, trapdoors and gates swing, her chests, barrels and shulker boxes open, and her crafting table, anvil, enchanting table, loom and the rest work at sea.",
 			"Furnaces, smokers, blast furnaces and brewing stands keep going while she sails, and hoppers keep feeding them.",
