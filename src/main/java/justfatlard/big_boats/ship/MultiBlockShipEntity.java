@@ -461,6 +461,7 @@ public class MultiBlockShipEntity extends Entity {
 		lighting.spawnLightBlocks(world, currentPose);
 
 		hold = justfatlard.big_boats.ship.sea.AtSea.open(this, world);
+		refreshDry(world);
 
 		LOGGER.debug("Undock complete: {} blocks, lighting={}", blocks.size(), lighting.hasLightSources());
 		return true;
@@ -849,6 +850,35 @@ public class MultiBlockShipEntity extends Entity {
 		for (ShipBlock block : blocks) surviving.add(block.relativePos());
 		collisionEntities.removeStaleShulkers(surviving);
 		if (structure != null) structure.removeBlocks(List.of(gone));
+		if (this.level() instanceof ServerLevel world) refreshDry(world);
+	}
+
+	/**
+	 * Keep the sea out of her hold while she sails, as it was kept out ashore: her blocks are not
+	 * in the world at sea, and the world's water stands where they are. Measured off the water
+	 * around her where she is now, with her height fixed, so the waterline only moves when she does.
+	 */
+	private void refreshDry(ServerLevel world) {
+		if (structure == null) return;
+		List<ShipBlock> current = blocks;
+		if (current.isEmpty()) return;
+		ShipPose pose = pose();
+		int helmY = net.minecraft.util.Mth.floor(this.getY());
+
+		// Her footprint in the world: each block's centre turned, and half a cell's diagonal round it.
+		double minX = Double.MAX_VALUE, minZ = Double.MAX_VALUE, maxX = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
+		int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
+		List<BlockPos> hull = new ArrayList<>(current.size());
+		for (ShipBlock block : current) {
+			RelativeBlockPos rel = block.relativePos();
+			hull.add(new BlockPos(rel.x(), rel.y(), rel.z()));
+			Vec3 centre = pose.toWorldPoint(new Vec3(rel.x() + 0.5, 0, rel.z() + 0.5));
+			minX = Math.min(minX, centre.x - 0.71); maxX = Math.max(maxX, centre.x + 0.71);
+			minZ = Math.min(minZ, centre.z - 0.71); maxZ = Math.max(maxZ, centre.z + 0.71);
+			minY = Math.min(minY, rel.y()); maxY = Math.max(maxY, rel.y());
+		}
+		java.util.OptionalInt waterline = DrySpace.waterline(world, minX, helmY + minY, minZ, maxX, helmY + maxY, maxZ);
+		structure.setDry(waterline.isEmpty() ? Set.of() : DrySpace.of(hull, waterline.getAsInt() - helmY));
 	}
 
 	/** Her blocks, edited in one copy: what her block entities hold and the locks on them, as they stand at sea. */
@@ -903,6 +933,7 @@ public class MultiBlockShipEntity extends Entity {
 		if (hold == null && this.level() instanceof ServerLevel sailingIn) {
 			// A ship that came back from a save still at sea: her stretch is made on her first tick.
 			hold = justfatlard.big_boats.ship.sea.AtSea.open(this, sailingIn);
+			refreshDry(sailingIn);
 		}
 		if (hold != null) hold.tick();
 

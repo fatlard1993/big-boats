@@ -3,6 +3,11 @@
 		"Build a ship out of ordinary blocks, put a helm on it, christen it with a bottle and sail the whole thing away as one vessel."
 	],
 	"versions": {
+		"1.3.0": [
+			"A ship's hold stays dry while she sails: below the waterline is air, not sea, so you walk it, see it clearly and don't drown in it.",
+			"An open boat's hull keeps the water out too, as long as her sides stand above it, and what was dry at sea is still dry when she docks.",
+			"Needs Pandorical 15.18."
+		],
 		"1.2.1": [
 			"A Ship action menu: who's crew, lock, unlock, and sharing with or taking back from players picked by face."
 		],

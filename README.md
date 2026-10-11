@@ -39,6 +39,7 @@ A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any
 - Anyone standing on the deck is carried along, through the snap to the grid included. On a current Pandorical client you walk the deck you see: your client holds you on it and moves you with it
 - **Coral and loose rock give way**: coral, coral fans and sea pickles are knocked aside like kelp, and natural terrain (coral block, stone, dirt, sand, gravel, clay, sandstone, magma) held on by no more than two faces breaks when the hull hits it, so reefs and shallows can be threaded. Anything more firmly set, or built rather than grown, stops the ship
 - A ship holds the height it was christened at
+- **A dry hold**: below the waterline she is air, not sea. Walk the hold, see across it and breathe in it while she sails; an open boat stays dry too, as long as her sides stand above the water, and what was dry at sea is still dry when she docks
 
 ### Working at Sea
 A ship at sea is still a working ship. Walk her deck and use what is on it the way you would ashore:

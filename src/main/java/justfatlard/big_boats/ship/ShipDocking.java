@@ -33,7 +33,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.TagValueOutput;
 import net.minecraft.world.phys.AABB;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -89,24 +88,20 @@ public class ShipDocking {
 		Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
 
 	/**
-	 * Empty the sea out of the ship's enclosed spaces.
+	 * Empty the sea out of the ship's dry space.
 	 *
 	 * <p>A ship displaces nothing while it is sailing: its blocks are not in the world, so the
 	 * water it left simply closes over the space. Docking puts back the hull and only the hull, so
-	 * a hold or a cabin comes back full to the deckhead - source blocks standing inside the ship,
+	 * a hold or a cabin comes back full to the waterline - source blocks standing inside the ship,
 	 * which is not a leak anyone can find or plug.
 	 *
-	 * <p>Only genuinely enclosed space is drained, found by flooding inward from the outside of the
-	 * ship's own bounding box: anything the outside can reach is the sea and stays the sea, and
-	 * anything it cannot is a room. That distinction is what keeps this from draining the pond a
-	 * ship happens to be moored in, and it is also why an open boat needs nothing drained - its
-	 * deck is open to the sky, so nothing aboard is enclosed, and the hull riding on the surface
-	 * riding on the surface is what keeps that deck dry instead.
+	 * <p>What is drained is what she kept dry at sea, {@link DrySpace}: the space below the water
+	 * the sea outside cannot get into. That is what keeps this from draining the pond a ship
+	 * happens to be moored in. Where no water stands around her, none came in and nothing is drained.
 	 */
 	private static void bailOut(ServerLevel world, List<BlockPos> shipPositions) {
 		if (shipPositions.isEmpty()) return;
 
-		Set<BlockPos> hull = new HashSet<>(shipPositions);
 		BlockPos first = shipPositions.get(0);
 		int minX = first.getX(), minY = first.getY(), minZ = first.getZ();
 		int maxX = minX, maxY = minY, maxZ = minZ;
@@ -115,59 +110,15 @@ public class ShipDocking {
 			minY = Math.min(minY, pos.getY()); maxY = Math.max(maxY, pos.getY());
 			minZ = Math.min(minZ, pos.getZ()); maxZ = Math.max(maxZ, pos.getZ());
 		}
+		java.util.OptionalInt waterline = DrySpace.waterline(world, minX, minY, minZ, maxX, maxY, maxZ);
+		if (waterline.isEmpty()) return;
 
-		// The walk below is over the bounding BOX, and nothing anywhere bounds a ship's extent -
-		// only its block count. Six arms of a few hundred blocks enclose a box of a hundred
-		// million positions, and filling a HashSet with them is an OutOfMemoryError, which is an
-		// Error and so goes straight past dock()'s catch and strands the ship mid-dock. A ship
-		// spread that thin has no enclosed room to drain anyway.
-		long volume = (long) (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
-		if (volume > ShipConfig.MAX_BAIL_VOLUME) {
-			LOGGER.warn("Skipping bail-out for a ship spanning {} positions (limit {}) — too spread out to hold water",
-				volume, ShipConfig.MAX_BAIL_VOLUME);
-			return;
-		}
-
-		// Flood from the box's shell inward, through anything that is not hull. What this reaches
-		// is connected to the outside world; what it misses is sealed in.
-		Set<BlockPos> outside = new HashSet<>();
-		ArrayDeque<BlockPos> queue = new ArrayDeque<>();
-		for (int x = minX; x <= maxX; x++) {
-			for (int y = minY; y <= maxY; y++) {
-				for (int z = minZ; z <= maxZ; z++) {
-					boolean onShell = x == minX || x == maxX || y == minY || y == maxY
-						|| z == minZ || z == maxZ;
-					if (!onShell) continue;
-					BlockPos pos = new BlockPos(x, y, z);
-					if (hull.contains(pos) || !outside.add(pos)) continue;
-					queue.add(pos);
-				}
-			}
-		}
-		while (!queue.isEmpty()) {
-			BlockPos pos = queue.poll();
-			for (Direction direction : Direction.values()) {
-				BlockPos next = pos.relative(direction);
-				if (next.getX() < minX || next.getX() > maxX
-					|| next.getY() < minY || next.getY() > maxY
-					|| next.getZ() < minZ || next.getZ() > maxZ) continue;
-				if (hull.contains(next) || !outside.add(next)) continue;
-				queue.add(next);
-			}
-		}
-
+		Set<BlockPos> hull = new HashSet<>(shipPositions);
 		int bailed = 0;
-		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-		for (int x = minX; x <= maxX; x++) {
-			for (int y = minY; y <= maxY; y++) {
-				for (int z = minZ; z <= maxZ; z++) {
-					cursor.set(x, y, z);
-					if (hull.contains(cursor) || outside.contains(cursor)) continue;
-					if (world.getBlockState(cursor).getFluidState().isEmpty()) continue;
-					world.setBlock(cursor.immutable(), Blocks.AIR.defaultBlockState(), STRUCTURE_CLEAR);
-					bailed++;
-				}
-			}
+		for (BlockPos pos : DrySpace.of(hull, waterline.getAsInt())) {
+			if (hull.contains(pos) || world.getBlockState(pos).getFluidState().isEmpty()) continue;
+			world.setBlock(pos, Blocks.AIR.defaultBlockState(), STRUCTURE_CLEAR);
+			bailed++;
 		}
 
 		if (bailed > 0) LOGGER.debug("Bailed {} block(s) of water out of the ship", bailed);
