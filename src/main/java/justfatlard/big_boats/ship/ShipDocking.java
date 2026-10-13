@@ -139,6 +139,27 @@ public class ShipDocking {
 	}
 
 	/**
+	 * Knock down a pile the ship had no room to take, now that the deck it lay on has gone.
+	 *
+	 * <p>The hull comes out without shape updates (see {@link #STRUCTURE_CLEAR}), and the
+	 * neighbour updates {@link #settle} sends after are not what a pile listens to: snow, and
+	 * every pile built like it, checks its footing only when the shape beside it changes. So one
+	 * left out of the ship was left standing on nothing at the mooring, in the middle of the hull
+	 * she was drawn as, and was still there, in the way of her own blocks, when she came back.
+	 * Ordinarily a pile on the deck sails with her ({@code FloodFillDetector.detect}); this is for
+	 * one that would have taken her past what her helm holds.
+	 */
+	private static void dropLeftBehind(ServerLevel world, List<BlockPos> hull) {
+		for (BlockPos pos : hull) {
+			BlockPos above = pos.above();
+			BlockState state = world.getBlockState(above);
+			if (ShipBlockUtils.ridesOnShip(state) && !state.canSurvive(world, above)) {
+				world.destroyBlock(above, true);
+			}
+		}
+	}
+
+	/**
 	 * Records world positions of all blocks after christening.
 	 */
 	public void recordPositions(List<ShipBlock> blocks, BlockPos helmPos) {
@@ -172,6 +193,19 @@ public class ShipDocking {
 			BlockPos worldPos = ShipBlockUtils.relativeToWorld(block.relativePos(), helmX, helmY, helmZ, cos, sin);
 			BlockState rotatedState = block.blockState().rotate(blockRotation);
 			BlockState existing = world.getBlockState(worldPos);
+
+			// What the hull sails through without stopping - kelp, grass, a drift of snow, a pile
+			// left lying where she moored - is cleared for her, the same as it is at sea. Treated
+			// as an obstruction, it pushed one of her own blocks out instead: a railing that came
+			// round onto the pile left behind on the deck was handed back as an item, and she lost
+			// it to something she would have sailed straight through.
+			//
+			// Dropped and written over rather than destroyed: destroying is a block update with
+			// the hull half placed around it, which is the thing STRUCTURE_WRITE is there to avoid.
+			if (!existing.isAir() && !existing.liquid() && ShipBlockUtils.isBreakableByShip(existing)) {
+				Block.dropResources(existing, world, worldPos, world.getBlockEntity(worldPos));
+				existing = Blocks.AIR.defaultBlockState();
+			}
 
 			if (existing.isAir() || existing.liquid()) {
 				world.setBlock(worldPos, rotatedState, STRUCTURE_WRITE);
@@ -321,6 +355,7 @@ public class ShipDocking {
 		}
 
 		settle(world, dockedBlockPositions);
+		dropLeftBehind(world, dockedBlockPositions);
 		dockedBlockPositions = List.of();
 		return List.copyOf(updatedBlocks);
 	}

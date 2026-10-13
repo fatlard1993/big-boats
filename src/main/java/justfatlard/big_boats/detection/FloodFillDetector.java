@@ -50,12 +50,22 @@ public class FloodFillDetector {
 	 * otherwise bring in the reef under it, and the seabed under that, and a ship floating clear
 	 * would be refused for being thousands of blocks too big.
 	 *
+	 * <p>A layer of snow or a pile of anything stacked the same way ({@link ShipBlockUtils#ridesOnShip})
+	 * is taken in when it rests on a block of the ship, and only then: a pile on the deck sails,
+	 * the snow on the jetty alongside does not. It is part of the ship without being a way into
+	 * anything further, so the walk never goes on from one.
+	 *
 	 * @param ship the world positions of the ship's blocks as it stands
 	 */
 	public static DetectionResult detect(Level world, BlockPos helmPos, int maxBlocks, Set<BlockPos> ship) {
 		List<ShipBlock> blocks = new ArrayList<>();
 		Set<BlockPos> visited = new HashSet<>();
 		Queue<BlockPos> queue = new ArrayDeque<>();
+		// Every block taken in, past the capacity too, so a pile can ask whether it is lying on one.
+		Set<BlockPos> taken = new HashSet<>();
+		// Piles met on the way, decided once the walk is done: one can be reached from the side
+		// before the block it lies on has been.
+		List<BlockPos> resting = new ArrayList<>();
 
 		visited.add(helmPos);
 		queue.add(helmPos);
@@ -79,10 +89,12 @@ public class FloodFillDetector {
 			BlockState state = world.getBlockState(pos);
 
 			if (!ShipBlockUtils.isShipEligible(state)) {
+				if (ShipBlockUtils.ridesOnShip(state)) resting.add(pos);
 				continue;
 			}
 
 			found++;
+			taken.add(pos);
 			if (found <= maxBlocks) {
 				blocks.add(ShipBlock.fromWorld(world, pos, helmPos));
 			}
@@ -102,6 +114,24 @@ public class FloodFillDetector {
 				}
 				visited.add(adjacent);
 				queue.add(adjacent);
+			}
+		}
+
+		// A pile on a pile is on the ship if the bottom one is, so round again while any joins.
+		// Only into room the hull has left: a pile is cargo, not structure, and one that would take
+		// a ship past what her helm holds is left where it lies rather than have her refused - a
+		// cow on deck would otherwise be able to stop a full ship sailing.
+		boolean joined = !resting.isEmpty();
+		while (joined && found < maxBlocks) {
+			joined = false;
+			for (var it = resting.iterator(); it.hasNext() && found < maxBlocks; ) {
+				BlockPos pos = it.next();
+				if (!taken.contains(pos.below())) continue;
+				it.remove();
+				joined = true;
+				found++;
+				taken.add(pos);
+				blocks.add(ShipBlock.fromWorld(world, pos, helmPos));
 			}
 		}
 

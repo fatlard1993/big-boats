@@ -22,6 +22,7 @@ import net.minecraft.world.level.block.SugarCaneBlock;
 import net.minecraft.world.level.block.VineBlock;
 import net.minecraft.world.level.block.WebBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -113,6 +114,10 @@ public final class ShipBlockUtils {
 	/**
 	 * Checks if a block state is eligible for ship construction.
 	 * Excludes air, liquids, and fragile/plant blocks that ships break through.
+	 *
+	 * <p>That leaves out a layer of snow, or a pile of anything else built the way snow is, even
+	 * one lying on the deck. Those join a ship by a rule of their own, {@link #ridesOnShip}: they
+	 * are part of whatever they rest on, and nothing else.
 	 */
 	public static boolean isShipEligible(BlockState state) {
 		if (state.isAir() || state.liquid()) {
@@ -120,6 +125,22 @@ public final class ShipBlockUtils {
 		}
 
 		return !isBreakableByShip(state);
+	}
+
+	/**
+	 * Whether this block goes where the block under it goes: a layer of snow, or a pile of
+	 * anything else stacked in layers the way snow is - by the game's own {@code layers} property,
+	 * so a mod's droppings or ash count without this knowing the mod.
+	 *
+	 * <p>Such a block is replaceable and often has no collision at all, so on its own terms it is
+	 * something a hull breaks through rather than builds with ({@link #isBreakableByShip}), and in
+	 * the world it still is: a hull still ploughs the snow off a jetty. But one lying on the deck
+	 * is not in the hull's way, it is on the hull, and leaving it out of the ship left it hanging
+	 * in the air where the deck had been once she sailed. Whether one is resting on a ship is the
+	 * caller's to decide, because only the caller knows which blocks are the ship.
+	 */
+	public static boolean ridesOnShip(BlockState state) {
+		return state.hasProperty(BlockStateProperties.LAYERS);
 	}
 
 	public static Rotation yawToBlockRotation(float yaw) {

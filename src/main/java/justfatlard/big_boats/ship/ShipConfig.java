@@ -20,16 +20,31 @@ public final class ShipConfig {
 	 * Past harbour speed a held throttle keeps building, this much a tick before drag, so open
 	 * water is crossed fast and a channel is not: it takes some sixteen seconds of clear water to
 	 * get from harbour speed to the top.
+	 *
+	 * <p>Paired with {@link #POWERED_DRAG}: under throttle speed levels off where this equals what
+	 * drag takes, {@code a * d / (1 - d)}, which here is about 1.5 blocks a tick. That has to sit
+	 * well above {@link #MAX_SPEED} or a held throttle creeps up on the top and never quite gets
+	 * there; at 0.0015 it levelled off near 0.75, under the 0.8 the top was raised to.
 	 */
-	public static final double OPEN_WATER_ACCELERATION = 0.0015;
+	public static final double OPEN_WATER_ACCELERATION = 0.003;
 
-	// Top speed in blocks/tick. 0.45 is 9 blocks a second, a little past a vanilla boat.
-	public static final double MAX_SPEED = 0.45;
+	/**
+	 * Top speed in blocks/tick. 0.8 is 16 blocks a second, about twice what a vanilla boat makes on
+	 * open water. Let go of the throttle up there and it takes three or four seconds to come back
+	 * down to harbour speed.
+	 *
+	 * <p>Keep it under 0.98. A move is tested where the hull ends up, not along the way, and a hull
+	 * block is sampled just inside its own faces, 0.98 of a block apart; a step longer than that
+	 * could carry a one-block wall clean through a one-block wall between one tick and the next.
+	 * Each axis is stepped and tested on its own, so it is the speed along an axis that matters,
+	 * never more than this.
+	 */
+	public static final double MAX_SPEED = 0.8;
 
 	// Multiplied against velocity each tick with no throttle: 2% a tick, a few seconds to stop.
 	public static final double DRAG = 0.98;
 
-	// The same under throttle: light enough that speed can build, heavy enough to cap it.
+	// The same under throttle: light enough that speed can build. MAX_SPEED is what caps it.
 	public static final double POWERED_DRAG = 0.998;
 
 	/**

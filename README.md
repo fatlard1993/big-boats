@@ -32,7 +32,7 @@ A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any
 ### Sailing
 - **WASD controls**: W/S for forward/back thrust, A/D to rotate
 - Ships have **momentum-based physics**; they accelerate and coast
-- **Speed builds on open water**: a ship reaches harbour speed (about 3.6 blocks a second) in a second or so, handy for channels and docks, and keeps gathering speed while W stays held, to about 9 blocks a second after some sixteen seconds of clear water. Let go and it slows back to harbour speed in a couple of seconds. Reversing tops out at harbour speed
+- **Speed builds on open water**: a ship reaches harbour speed (about 3.6 blocks a second) in a second or so, handy for channels and docks, and keeps gathering speed while W stays held, to about 16 blocks a second after some sixteen seconds of clear water. Let go and it slows back to harbour speed in three or four seconds. Reversing tops out at harbour speed
 - A keel: a ship barely slides sideways, so at speed it turns where it points rather than drifting
 - **Collision detection** stops ships at terrain and other ships (breaks through plants, coral and loose rock)
 - Ships **snap to grid** when you dismount for clean docking

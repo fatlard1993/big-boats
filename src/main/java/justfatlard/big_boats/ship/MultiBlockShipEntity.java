@@ -170,10 +170,11 @@ public class MultiBlockShipEntity extends Entity {
 
 	private int lastRescanRejectedBlocks = 0;
 
-	// Hull world positions for ship-to-ship collision, computed once per tick when sailing
-	// and read by other ships' gatherNearbyShipHullPositions.
+	// Hull world positions for ship-to-ship collision, read by other ships'
+	// gatherNearbyShipHullPositions; kept for as long as the pose and the blocks they came from.
 	private Set<BlockPos> cachedHullPositions = Set.of();
-	private int cachedHullTick = -1;
+	private ShipPose cachedHullPose;
+	private List<ShipBlock> cachedHullBlocks;
 
 	private int ticksSinceHelmCheck = 0;
 
@@ -1400,15 +1401,24 @@ public class MultiBlockShipEntity extends Entity {
 	}
 
 	/**
-	 * Returns this ship's hull world positions, computing once per tick.
+	 * Returns this ship's hull world positions where she is now.
 	 * Other ships call this to check for overlap; caching avoids recomputing the
 	 * same positions for every querying ship.
+	 *
+	 * <p>Kept by pose, not by tick. Kept by tick, a ship that ticked before this one was handed
+	 * where this one stood a tick ago, a whole move astern of where she is - and two ships closing
+	 * at the top speed then moved up to two moves into each other between one test and the next,
+	 * enough for a one-block bow to pass clean through a one-block side. Measured from the real
+	 * pose, each test is one ship's single move against where the other really is, which a move
+	 * under {@link ShipConfig#MAX_SPEED} cannot jump.
 	 */
 	private Set<BlockPos> getOrComputeHullPositions() {
-		int currentTick = this.tickCount;
-		if (currentTick != cachedHullTick) {
-			cachedHullPositions = collision.getWorldHullPositions(pose());
-			cachedHullTick = currentTick;
+		ShipPose now = pose();
+		List<ShipBlock> current = blocks;
+		if (!now.equals(cachedHullPose) || current != cachedHullBlocks) {
+			cachedHullPositions = collision.getWorldHullPositions(now);
+			cachedHullPose = now;
+			cachedHullBlocks = current;
 		}
 		return cachedHullPositions;
 	}
