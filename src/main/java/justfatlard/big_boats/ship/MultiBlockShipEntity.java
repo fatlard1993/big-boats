@@ -567,7 +567,7 @@ public class MultiBlockShipEntity extends Entity {
 			relToWorldPos.put(block.relativePos(), worldPos);
 		}
 
-		var detectionResult = FloodFillDetector.detect(world, helmWorldPos, capacity);
+		var detectionResult = FloodFillDetector.detect(world, helmWorldPos, capacity, currentWorldPositions);
 		if (!(detectionResult instanceof justfatlard.big_boats.detection.DetectionResult.Success successResult)) {
 			String reason = detectionResult instanceof justfatlard.big_boats.detection.DetectionResult.Failure failure
 				? failure.message() : "unknown";

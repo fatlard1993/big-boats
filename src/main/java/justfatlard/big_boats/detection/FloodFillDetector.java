@@ -38,6 +38,21 @@ public class FloodFillDetector {
 	 * @return the connected blocks, or why they could not be counted
 	 */
 	public static DetectionResult detect(Level world, BlockPos helmPos, int maxBlocks) {
+		return detect(world, helmPos, maxBlocks, Set.of());
+	}
+
+	/**
+	 * As {@link #detect(Level, BlockPos, int)}, for a ship that already has blocks.
+	 *
+	 * <p>What a sailing hull would knock loose - coral, a sea pickle, a spur of rock - is taken
+	 * in only where its shape meets the block it was reached from, or where it is already part of
+	 * the ship. A face apart is not touching: a coral growing up to just under the keel would
+	 * otherwise bring in the reef under it, and the seabed under that, and a ship floating clear
+	 * would be refused for being thousands of blocks too big.
+	 *
+	 * @param ship the world positions of the ship's blocks as it stands
+	 */
+	public static DetectionResult detect(Level world, BlockPos helmPos, int maxBlocks, Set<BlockPos> ship) {
 		List<ShipBlock> blocks = new ArrayList<>();
 		Set<BlockPos> visited = new HashSet<>();
 		Queue<BlockPos> queue = new ArrayDeque<>();
@@ -72,13 +87,21 @@ public class FloodFillDetector {
 				blocks.add(ShipBlock.fromWorld(world, pos, helmPos));
 			}
 
-			// Mark adjacent positions visited at enqueue time to prevent queue pollution
+			// Mark adjacent positions visited at enqueue time to prevent queue pollution. One passed
+			// over for not touching stays unvisited, so a neighbour it does touch can still reach it.
+			VoxelShape ours = null;
 			for (Direction direction : Direction.values()) {
 				BlockPos adjacent = pos.relative(direction);
-				if (!visited.contains(adjacent)) {
-					visited.add(adjacent);
-					queue.add(adjacent);
+				if (visited.contains(adjacent)) continue;
+				if (!ship.contains(adjacent) && world.isLoaded(adjacent)) {
+					BlockState theirs = world.getBlockState(adjacent);
+					if (ShipBlockUtils.isShipEligible(theirs) && ShipBlockUtils.isKnockedLooseByShip(world, adjacent, theirs)) {
+						if (ours == null) ours = state.getShape(world, pos);
+						if (!touches(ours, direction, theirs.getShape(world, adjacent))) continue;
+					}
 				}
+				visited.add(adjacent);
+				queue.add(adjacent);
 			}
 		}
 
