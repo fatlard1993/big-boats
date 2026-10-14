@@ -51,7 +51,7 @@ A ship at sea is still a working ship. Walk her deck and use what is on it the w
 - **Ladders and vines** climb
 - A chest locked with [Chest Utils](https://github.com/fatlard1993/chest-utils) 1.1.1 or newer stays locked at sea and is still locked to its owner wherever she docks, and a [Loot Ender](https://github.com/fatlard1993/loot-ender) loot chest aboard opens as each player's own copy
 
-Clicking blocks at sea needs Pandorical 15.13 or newer on the client. Other mods' blocks join in through the `pandorical:usable_on_structures` block tag (to be clicked) and `big-boats-justfatlard:ticks_at_sea` (to keep running while she sails).
+Clicking blocks at sea needs Pandorical on the client. Other mods' blocks join in through the `pandorical:usable_on_structures` block tag (to be clicked) and `big-boats-justfatlard:ticks_at_sea` (to keep running while she sails).
 
 ### Docking System
 - Ships **auto-dock** when you dismount (places real blocks back)
@@ -129,7 +129,7 @@ The rating is kept when the helm is placed, and a broken helm drops with its Ton
 Big Boats runs server-side, and [Pandorical](https://github.com/fatlard1993/pandorical) is required: the server will not load this mod without it. Three things route through it:
 
 - **Ship rendering**: a ship's blocks are drawn as a single batch-rendered Pandorical structure, posed and moved each tick to follow the ship. The ship entity itself uses Pandorical's `"invisible"` renderer and draws nothing; only the structure is visible.
-- **Walking the deck**: the ship's structure is marked walkable, so a Pandorical client stands its player on the deck it draws and carries them with it. Those players are left to their client: the server does not push them along, and the invisible collision it keeps for everything else is neither sent to them nor solid to them. This needs Pandorical 15 or newer on the client; there is no handshake and no fallback, so an older client sees no ship at all.
+- **Walking the deck**: the ship's structure is marked walkable, so a Pandorical client stands its player on the deck it draws and carries them with it. Those players are left to their client: the server does not push them along, and the invisible collision it keeps for everything else is neither sent to them nor solid to them. This needs a current Pandorical on the client; there is no handshake and no fallback, so a client on an older one sees no ship at all.
 - **Piloting camera**: pull-back distance and third-person-back perspective are pushed to the player through Pandorical's camera API on mount and dismount. A passenger sitting on a cushion gets a shorter pull-back than the pilot.
 
 Clients are not the optional half here. A ship is invisible without Pandorical, so a vanilla client cannot see or pilot one at all.
