@@ -3,6 +3,9 @@
 		"Build a ship out of ordinary blocks, put a helm on it, christen it with a bottle and sail the whole thing away as one vessel."
 	],
 	"versions": {
+		"1.3.3": [
+			"A mod menu icon of a two-masted ship under sail."
+		],
 		"1.3.2": [
 			"Ships are faster at the top end: a held throttle on open water now builds to about 16 blocks a second instead of 9, in the same sixteen seconds or so. Harbour speed and handling are unchanged.",
 			"A pile on the deck, of snow or anything stacked in layers the way snow is, sails with the ship instead of being left hanging in the air where she was moored.",
