@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Generate Big Boats' mod menu icon: an oak boat riding open water.
+"""Generate Big Boats' mod menu icon: a two-masted ship under sail, side on.
 
-Pure stdlib PNG reader and writer (zlib + struct) so it runs without Pillow,
-the same script generated art approach as the rest of the suite. Deterministic:
-re-running produces identical bytes. Source pixels are read straight out of the
-vanilla Minecraft jar and scaled nearest neighbour, never smoothed.
+The mod's point is that a ship is a build you sail, so the icon is a ship rather than a boat:
+a flared oak hull with a dark wale and a raised stern, two masts with square sails, a pennant,
+and open water under her. The sails are flat cloth with one shaded edge, not wool: wool's
+speckle turns to noise at sixteen pixels. Hull planks are vanilla oak and dark oak.
+
+Pure stdlib PNG reader and writer (zlib + struct) so it runs without Pillow, the same script
+generated art approach as the rest of the suite. Deterministic: re-running produces identical
+bytes.
 
 Usage: python3 generate_icon.py [path/to/minecraft.jar]
 """
@@ -24,7 +28,7 @@ _JAR = None
 
 
 def minecraft_version():
-    """The version this mod targets, so the icon is cut from the same jar the
+    """The version this mod targets, so the sprite is cut from the same jar the
     mod is built against rather than whatever happens to be cached."""
     path = os.path.join(HERE, "gradle.properties")
     if not os.path.exists(path):
@@ -192,33 +196,95 @@ def scale(pixels, n):
     """Nearest neighbour only: these are pixel textures, never smooth them."""
     return [[px for px in row for _ in range(n)] for row in pixels for _ in range(n)]
 
-def shade(px, factor):
-    return (min(255, int(px[0] * factor)), min(255, int(px[1] * factor)),
-            min(255, int(px[2] * factor)), px[3])
+
+def blank(size=16):
+    return [[CLEAR] * size for _ in range(size)]
 
 
-SKY = (0xBF, 0xE3, 0xFF, 0xFF)
-SEA = (0x2A, 0x53, 0xA8, 0xFF)
-CREST = (0x4A, 0x7B, 0xD6, 0xFF)
+def stamp(sprite, art, left, top):
+    """Lay art onto the sprite at (left, top); transparent source pixels leave
+    the sprite alone."""
+    for y, row in enumerate(art):
+        for x, px in enumerate(row):
+            if px[3] and 0 <= top + y < len(sprite) and 0 <= left + x < len(sprite[0]):
+                sprite[top + y][left + x] = px
+    return sprite
+
+
+def crop(pixels, left, top, width, height):
+    return [row[left:left + width] for row in pixels[top:top + height]]
+
+
+
+def here(path):
+    """A texture this mod ships, read from the repo rather than the jar."""
+    with open(os.path.join(HERE, path), "rb") as f:
+        return decode_png(f.read())
+
+
+def sample(pixels, width, height):
+    """Nearest neighbour to any size, up or down. Pixel art is never smoothed."""
+    src_h, src_w = len(pixels), len(pixels[0])
+    return [[pixels[y * src_h // height][x * src_w // width] for x in range(width)]
+            for y in range(height)]
+
+
+def fill(colour, size=16):
+    return [[colour] * size for _ in range(size)]
+
+
+def put(sprite, x, y, colour):
+    if 0 <= y < len(sprite) and 0 <= x < len(sprite[0]):
+        sprite[y][x] = colour
+
+
+def rect(sprite, x0, y0, x1, y1, colour):
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            put(sprite, x, y, colour)
+
+
+SKY, SKY_HIGH = (122, 178, 230, 255), (150, 198, 240, 255)
+SEA, SEA_LIGHT, FOAM = (38, 84, 160, 255), (52, 108, 190, 255), (200, 225, 245, 255)
+MAST = (92, 64, 36, 255)
+CLOTH, CLOTH_SHADE = (240, 236, 224, 255), (206, 200, 186, 255)
+PENNANT = (200, 40, 40, 255)
 
 
 def build_icon():
-    """An oak boat on open water: the vanilla item sprite is the boat every
-    player already recognises, and the sea under it is the point of the mod."""
-    icon = [[SKY for _ in range(16)] for _ in range(16)]
-    for y in range(12, 16):
-        for x in range(16):
-            icon[y][x] = SEA
-    for x in range(16):
-        if x % 4 != 3:
-            icon[12][x] = CREST
-    boat = vanilla("item/oak_boat.png")
-    for y in range(16):
-        for x in range(16):
-            px = boat[y][x]
-            if px[3] > 0:
-                icon[y][x] = (px[0], px[1], px[2], 0xFF)
-    return scale(icon, 8)
+    sprite = fill(SKY)
+    for y in range(3):
+        rect(sprite, 0, y, 15, y, SKY_HIGH)
+    planks = vanilla("block/oak_planks.png")
+    dark = vanilla("block/dark_oak_planks.png")
+    for y in range(1, 11):
+        put(sprite, 6, y, MAST)
+        put(sprite, 11, y, MAST)
+    # Square sails, a pixel fuller across the middle where the wind fills them.
+    for mid, top, height, width in ((6, 2, 6, 5), (11, 3, 5, 4)):
+        for i in range(height):
+            half = width // 2 + (1 if i in (height // 2 - 1, height // 2) else 0)
+            for x in range(mid - half, mid + half + 1):
+                if x != mid or i in (0, height - 1):
+                    put(sprite, x, top + i, CLOTH if x < mid + half else CLOTH_SHADE)
+        rect(sprite, mid - width // 2, top - 1, mid + width // 2, top - 1, MAST)
+    put(sprite, 6, 0, PENNANT)
+    put(sprite, 7, 0, PENNANT)
+    # The hull flares: widest at the deck, narrowing to the keel.
+    for x0, x1, y in ((1, 14, 10), (2, 13, 11), (3, 12, 12)):
+        for x in range(x0, x1 + 1):
+            put(sprite, x, y, planks[y][x])
+    rect(sprite, 0, 9, 15, 9, dark[9][0])
+    rect(sprite, 1, 9, 14, 9, tuple(int(v * 0.9) for v in dark[9][3][:3]) + (255,))
+    rect(sprite, 12, 8, 15, 8, planks[8][12])
+    put(sprite, 15, 7, MAST)
+    for y in range(13, 16):
+        rect(sprite, 0, y, 15, y, SEA if y % 2 else SEA_LIGHT)
+    for x in (0, 4, 8, 13):
+        put(sprite, x, 13, FOAM)
+    put(sprite, 2, 12, FOAM)
+    put(sprite, 13, 12, FOAM)
+    return scale(sprite, 8)
 
 
 if __name__ == "__main__":
