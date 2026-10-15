@@ -69,8 +69,6 @@ So with [village-quests](https://github.com/fatlard1993/village-quests) installe
 
 This is a shop rather than a quest, because nothing here needs doing. The kit is deliberately not a ship: enough to make the idea concrete, nowhere near enough to skip the building.
 
-Optional and guarded: without village-quests the mod behaves exactly as before.
-
 ## Items
 
 ### Christening Bottle
@@ -126,13 +124,7 @@ The rating is kept when the helm is placed, and a broken helm drops with its Ton
 
 ## Pandorical
 
-Big Boats runs server-side, and [Pandorical](https://github.com/fatlard1993/pandorical) is required: the server will not load this mod without it. Three things route through it:
-
-- **Ship rendering**: a ship's blocks are drawn as a single batch-rendered Pandorical structure, posed and moved each tick to follow the ship. The ship entity itself uses Pandorical's `"invisible"` renderer and draws nothing; only the structure is visible.
-- **Walking the deck**: the ship's structure is marked walkable, so a Pandorical client stands its player on the deck it draws and carries them with it. Those players are left to their client: the server does not push them along, and the invisible collision it keeps for everything else is neither sent to them nor solid to them. This needs a current Pandorical on the client; there is no handshake and no fallback, so a client on an older one sees no ship at all.
-- **Piloting camera**: pull-back distance and third-person-back perspective are pushed to the player through Pandorical's camera API on mount and dismount. A passenger sitting on a cushion gets a shorter pull-back than the pilot.
-
-Clients are not the optional half here. A ship is invisible without Pandorical, so a vanilla client cannot see or pilot one at all.
+Big Boats goes on the server only, and **Pandorical is required there and on every player's client**: the helm and the christening bottle are new items, and a client without Pandorical has no entry for them. Pandorical is also what draws a ship and carries a player on its deck, so a client without it, or with an older Pandorical, sees no ship at all.
 
 ## Commands
 
