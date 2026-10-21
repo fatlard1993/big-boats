@@ -99,9 +99,12 @@ public class ShipStructure {
 		PandoricalApi.structures().updateBlocks(structureId, List.of(), removed, Map.of());
 	}
 
+	/** Before it, the hold takes the sea like the deck does. */
+	private static final boolean DRY = justfatlard.big_boats.PandoricalVersion.atLeast("15.18.0");
+
 	/** Keeps the sea out of these cells while she sails; see {@link DrySpace}. */
 	public void setDry(java.util.Collection<net.minecraft.core.BlockPos> cells) {
-		if (!spawned) return;
+		if (!spawned || !DRY) return;
 		List<RelPos> dry = new ArrayList<>(cells.size());
 		for (net.minecraft.core.BlockPos cell : cells) dry.add(new RelPos(cell.getX(), cell.getY(), cell.getZ()));
 		PandoricalApi.structures().setDry(structureId, dry);

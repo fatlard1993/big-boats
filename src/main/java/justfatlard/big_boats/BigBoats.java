@@ -142,12 +142,16 @@ public class BigBoats implements ModInitializer {
 			PandoricalApi.content().registerModAssets(MOD_ID);
 			// The lock as a menu: the ship is the one you are aboard or nearest, so a button needs
 			// nothing aimed, and sharing asks who by face rather than for a name.
-			PandoricalApi.actionMenus().suggestMenu(MOD_ID + ":ship", "Ship", java.util.List.of(
+			// A Pandorical before 15.17 sends {players} as typed, so there sharing stays a command.
+			java.util.List<justfatlard.pandorical.api.ActionMenuApi.Button> buttons = new java.util.ArrayList<>(java.util.List.of(
 				justfatlard.pandorical.api.ActionMenuApi.Button.runs("minecraft:oak_boat", "Crew", "ship-lock list"),
 				justfatlard.pandorical.api.ActionMenuApi.Button.runs("minecraft:chain", "Lock", "ship-lock lock"),
-				justfatlard.pandorical.api.ActionMenuApi.Button.runs("minecraft:tripwire_hook", "Unlock", "ship-lock unlock"),
-				justfatlard.pandorical.api.ActionMenuApi.Button.runs("minecraft:player_head", "Share", "ship-lock share {players}"),
-				justfatlard.pandorical.api.ActionMenuApi.Button.runs("minecraft:skeleton_skull", "Unshare", "ship-lock unshare {players}")));
+				justfatlard.pandorical.api.ActionMenuApi.Button.runs("minecraft:tripwire_hook", "Unlock", "ship-lock unlock")));
+			if (PandoricalVersion.atLeast("15.17.0")) {
+				buttons.add(justfatlard.pandorical.api.ActionMenuApi.Button.runs("minecraft:player_head", "Share", "ship-lock share {players}"));
+				buttons.add(justfatlard.pandorical.api.ActionMenuApi.Button.runs("minecraft:skeleton_skull", "Unshare", "ship-lock unshare {players}"));
+			}
+			PandoricalApi.actionMenus().suggestMenu(MOD_ID + ":ship", "Ship", buttons);
 		}
 
 		Registry.register(BuiltInRegistries.BLOCK, HELM_BLOCK_KEY.identifier(), HELM_BLOCK);
