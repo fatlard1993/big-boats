@@ -32,5 +32,12 @@
 	"suggests": {
 		"village-quests-justfatlard": "*",
 		"chest-utils": ">=1.1.1"
+	},
+	"custom": {
+		"modmenu": {
+			"links": {
+				"modmenu.donate": "https://github.com/sponsors/fatlard1993"
+			}
+		}
 	}
 }
