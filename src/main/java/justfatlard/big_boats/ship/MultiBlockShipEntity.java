@@ -699,9 +699,14 @@ public class MultiBlockShipEntity extends Entity {
 		// clients out-of-band via the structure API, not vanilla entity tracked data.
 	}
 
+	/**
+	 * Not a target. Its box is a tracking anchor around the helm, not the ship's shape, so a
+	 * server-side look through it - block-tip's - found "Ship" over the planks beneath the helm.
+	 * The helm block, docked, and the helm interaction, at sea, are where a ship is clicked.
+	 */
 	@Override
 	public boolean isPickable() {
-		return !this.isRemoved();
+		return false;
 	}
 
 	@Override
