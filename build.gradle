@@ -128,7 +128,8 @@ tasks.matching { it.name == "runClientGameTest" }.configureEach {
 	// Silent: OpenAL's null device, the same as gametest.gradle gives the rest of the suite.
 	environment("ALSOFT_DRIVERS", "null")
 	systemProperty("pandorical.pictures", project.hasProperty("pictures"))
-	args("--width", "1920", "--height", "1080")
+	// Full size only for pictures: software rendering draws the small default window far faster.
+	if (project.hasProperty("pictures")) args("--width", "1920", "--height", "1080")
 }
 
 // run it under xvfb-run.
