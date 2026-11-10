@@ -9,14 +9,8 @@
 		"1.3.6": [
 			"With Crosshair Corsair, the christening bottle aims with the throwable crosshair."
 		],
-		"1.3.5": [
-			"Mod Menu's Donate button leads to sponsoring the author on GitHub. Nothing in play changes."
-		],
 		"1.3.4": [
 			"Works with Pandorical as old as 15.13.0. Before 15.18 a ship's hold takes the sea while she sails, and before 15.17 the Ship menu leaves out Share and Unshare: /ship-lock share and /ship-lock unshare still do it."
-		],
-		"1.3.3": [
-			"A mod menu icon of a two-masted ship under sail."
 		],
 		"1.3.2": [
 			"Ships are faster at the top end: a held throttle on open water now builds to about 16 blocks a second instead of 9, in the same sixteen seconds or so. Harbour speed and handling are unchanged.",
