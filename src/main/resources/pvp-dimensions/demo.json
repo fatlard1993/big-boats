@@ -1,0 +1,44 @@
+{
+  "demo": {
+    "name": "Big Boats",
+    "icon": "big-boats-justfatlard:helm",
+    "about": [
+      "Build a ship out of any blocks you like, put a helm on her, christen her with a bottle and sail her away.",
+      "Build a hull out on the water, place the helm facing the way she should sail, throw the christening bottle at her, then right-click the helm and steer with W, A, S and D."
+    ]
+  },
+  "pvp_preset": 1,
+  "needs": ["big-boats-justfatlard"],
+  "preset": {
+    "name": "Big Boats",
+    "icon": "big-boats-justfatlard:helm",
+    "pvp": false,
+    "game_mode": "survival",
+    "entry_kit": [
+      {"slot": 0, "item": {"id": "big-boats-justfatlard:helm", "count": 1}},
+      {"slot": 1, "item": {"id": "big-boats-justfatlard:christening_bottle", "count": 4}},
+      {"slot": 2, "item": {"id": "minecraft:oak_planks", "count": 64}},
+      {"slot": 3, "item": {"id": "minecraft:oak_slab", "count": 64}},
+      {"slot": 4, "item": {"id": "minecraft:oak_fence", "count": 32}},
+      {"slot": 5, "item": {"id": "minecraft:white_wool", "count": 32}},
+      {"slot": 6, "item": {"id": "minecraft:chest", "count": 2}},
+      {"slot": 7, "item": {"id": "minecraft:lantern", "count": 4}},
+      {"slot": 8, "item": {"id": "minecraft:cooked_beef", "count": 8}},
+      {"slot": 9, "item": {"id": "minecraft:oak_planks", "count": 64}},
+      {"slot": 10, "item": {"id": "minecraft:oak_planks", "count": 64}},
+      {"slot": 11, "item": {"id": "minecraft:oak_stairs", "count": 32}},
+      {"slot": 12, "item": {"id": "minecraft:ladder", "count": 16}},
+      {"slot": 13, "item": {"id": "minecraft:oak_door", "count": 2}},
+      {"slot": 14, "item": {"id": "minecraft:lily_pad", "count": 8}}
+    ],
+    "respawn_kit": "entry",
+    "goal": "time",
+    "mobs": "off",
+    "life": 15,
+    "size": 4,
+    "world": "overworld",
+    "shape": "natural",
+    "biome": "minecraft:ocean",
+    "weather": "clear"
+  }
+}
