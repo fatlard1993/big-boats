@@ -3,6 +3,9 @@
 		"Build a ship out of ordinary blocks, put a helm on it, christen it with a bottle and sail the whole thing away as one vessel."
 	],
 	"versions": {
+		"1.3.9": [
+			"A demo to play in PvP Dimensions' onboarding."
+		],
 		"1.3.8": [
 			"Drop changelog notes for changes nothing in the game shows."
 		],
