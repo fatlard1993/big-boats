@@ -32,6 +32,9 @@ import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.ChatFormatting;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
+import it.unimi.dsi.fastutil.longs.LongSets;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -172,7 +175,7 @@ public class MultiBlockShipEntity extends Entity {
 
 	// Hull world positions for ship-to-ship collision, read by other ships'
 	// gatherNearbyShipHullPositions; kept for as long as the pose and the blocks they came from.
-	private Set<BlockPos> cachedHullPositions = Set.of();
+	private LongSet cachedHullPositions = LongSets.EMPTY_SET;
 	private ShipPose cachedHullPose;
 	private List<ShipBlock> cachedHullBlocks;
 
@@ -974,7 +977,7 @@ public class MultiBlockShipEntity extends Entity {
 
 		// Hull positions of other sailing ships, computed once per tick and reused
 		// for the rotation, X, Z, and Y collision checks.
-		Set<BlockPos> otherShipHullPositions = gatherNearbyShipHullPositions();
+		LongSet otherShipHullPositions = gatherNearbyShipHullPositions();
 
 		if (controller != null) {
 			Input input = PlayerInputStorage.getInput(controller);
@@ -995,8 +998,7 @@ public class MultiBlockShipEntity extends Entity {
 				float newYaw = (float) Math.IEEEremainder(
 					yawRadians - sideways * ShipConfig.TURN_SPEED, 2 * Math.PI);
 				ShipPose rotatedPose = new ShipPose(helmX, this.getY(), helmZ, newYaw);
-				if (!collision.checkCollisionAtRotation(this.level(), rotatedPose)
-						&& !collision.checkShipCollision(rotatedPose, otherShipHullPositions)) {
+				if (!collision.checkTurnBlocked(this.level(), rotatedPose, otherShipHullPositions)) {
 					yawRadians = newYaw;
 					this.setYRot((float) Math.toDegrees(yawRadians));
 				}
@@ -1015,15 +1017,13 @@ public class MultiBlockShipEntity extends Entity {
 
 		double velX = physics.getVelocityX();
 		double velZ = physics.getVelocityZ();
-		ShipPose currentPose = pose();
 
 		// World border: Minecraft world limit is ±30,000,000 blocks
 		double worldLimit = 29_999_984;
 
 		if (velX != 0 && Math.abs(helmX + velX) < worldLimit) {
 			ShipPose movedPose = new ShipPose(helmX + velX, this.getY(), helmZ, yawRadians);
-			if (!collision.checkCollisionAndBreakFragile(this.level(), currentPose, velX, 0, 0)
-					&& !collision.checkShipCollision(movedPose, otherShipHullPositions)) {
+			if (!collision.checkMoveBlocked(this.level(), movedPose, otherShipHullPositions)) {
 				helmX += velX;
 			} else {
 				physics.stopX();
@@ -1032,13 +1032,9 @@ public class MultiBlockShipEntity extends Entity {
 			physics.stopX();
 		}
 
-		// Recompute pose after X movement (helmX may have changed)
-		currentPose = pose();
-
 		if (velZ != 0 && Math.abs(helmZ + velZ) < worldLimit) {
 			ShipPose movedPose = new ShipPose(helmX, this.getY(), helmZ + velZ, yawRadians);
-			if (!collision.checkCollisionAndBreakFragile(this.level(), currentPose, 0, 0, velZ)
-					&& !collision.checkShipCollision(movedPose, otherShipHullPositions)) {
+			if (!collision.checkMoveBlocked(this.level(), movedPose, otherShipHullPositions)) {
 				helmZ += velZ;
 			} else {
 				physics.stopZ();
@@ -1047,13 +1043,9 @@ public class MultiBlockShipEntity extends Entity {
 			physics.stopZ();
 		}
 
-		// Recompute pose after Z movement (helmZ may have changed)
-		currentPose = pose();
-
 		if (yVelocity != 0) {
 			ShipPose movedPose = new ShipPose(helmX, this.getY() + yVelocity, helmZ, yawRadians);
-			if (!collision.checkCollisionAndBreakFragile(this.level(), currentPose, 0, yVelocity, 0)
-					&& !collision.checkShipCollision(movedPose, otherShipHullPositions)) {
+			if (!collision.checkMoveBlocked(this.level(), movedPose, otherShipHullPositions)) {
 				newY += yVelocity;
 			}
 		}
@@ -1417,7 +1409,7 @@ public class MultiBlockShipEntity extends Entity {
 	 * pose, each test is one ship's single move against where the other really is, which a move
 	 * under {@link ShipConfig#MAX_SPEED} cannot jump.
 	 */
-	private Set<BlockPos> getOrComputeHullPositions() {
+	private LongSet getOrComputeHullPositions() {
 		ShipPose now = pose();
 		List<ShipBlock> current = blocks;
 		if (!now.equals(cachedHullPose) || current != cachedHullBlocks) {
@@ -1433,9 +1425,9 @@ public class MultiBlockShipEntity extends Entity {
 	 * Used for ship-to-ship collision: ships stop when they meet, same as terrain.
 	 * Computed once per tick and reused for all axis checks.
 	 */
-	private Set<BlockPos> gatherNearbyShipHullPositions() {
+	private LongSet gatherNearbyShipHullPositions() {
 		Level world = this.level();
-		if (!(world instanceof ServerLevel)) return Set.of();
+		if (!(world instanceof ServerLevel)) return LongSets.EMPTY_SET;
 
 		double searchRange = ShipConfig.SHIP_OVERLAP_SEARCH_RANGE;
 		AABB searchBox = new AABB(
@@ -1446,9 +1438,10 @@ public class MultiBlockShipEntity extends Entity {
 			EntityTypeTest.forClass(MultiBlockShipEntity.class), searchBox,
 			other -> other != this && other.state == ShipState.SAILING);
 
-		if (nearbyShips.isEmpty()) return Set.of();
+		if (nearbyShips.isEmpty()) return LongSets.EMPTY_SET;
+		if (nearbyShips.size() == 1) return nearbyShips.get(0).getOrComputeHullPositions();
 
-		Set<BlockPos> positions = new HashSet<>();
+		LongSet positions = new LongOpenHashSet();
 		for (MultiBlockShipEntity other : nearbyShips) {
 			positions.addAll(other.getOrComputeHullPositions());
 		}

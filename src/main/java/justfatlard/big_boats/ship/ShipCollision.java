@@ -8,6 +8,9 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -25,6 +28,8 @@ import org.slf4j.LoggerFactory;
 public class ShipCollision {
 	private static final Logger LOGGER = LoggerFactory.getLogger(ShipCollision.class);
 	private Set<RelativeBlockPos> hullBlocks = new HashSet<>();
+	private double[] rotatedCentres;
+	private int rotatedYawBits;
 
 	private static final int[][] NEIGHBOR_OFFSETS = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 
@@ -57,6 +62,7 @@ public class ShipCollision {
 	 */
 	public void computeHullBlocks(List<ShipBlock> blocks) {
 		hullBlocks.clear();
+		rotatedCentres = null;
 
 		Set<RelativeBlockPos> occupiedPositions = new HashSet<>();
 		for (ShipBlock block : blocks) {
@@ -88,29 +94,31 @@ public class ShipCollision {
 	}
 
 	/**
-	 * Gathers the set of world BlockPos that hull blocks would occupy at the given pose.
-	 * Shared by both movement and rotation collision checks.
+	 * Gathers the world positions, packed with {@link BlockPos#asLong}, that hull blocks would
+	 * occupy at the given pose. Shared by the terrain, turning and ship-to-ship checks.
 	 */
-	private Set<BlockPos> gatherCollisionPositions(ShipPose pose) {
-		Set<BlockPos> positions = new HashSet<>();
+	private LongSet gatherCollisionPositions(ShipPose pose) {
+		double[] centres = centresAt(pose.yawRadians());
+		LongSet positions = new LongOpenHashSet(centres.length / 3 * 4);
 
-		for (RelativeBlockPos hullPos : hullBlocks) {
+		// Across the deck the block is as wide as its heading makes it; up and down it is
+		// never rotated and stays half a block.
+		double across = rotatedHalfWidth(pose.yawRadians());
+
+		for (int i = 0; i < centres.length; i += 3) {
 			// toWorld is the block's corner; the samples go around its centre. Taken around the
 			// corner they reached a block past the hull to the north, west and below, so a ship
 			// stopped short of a jetty on those sides and scraped a seabed it was clear of.
-			Vec3 worldPos = pose.toWorld(hullPos).add(0.5, 0.5, 0.5);
-
-			// Across the deck the block is as wide as its heading makes it; up and down it is
-			// never rotated and stays half a block.
-			double across = rotatedHalfWidth(pose.yawRadians());
+			double wx = pose.helmX() + centres[i] + 0.5;
+			double wy = pose.helmY() + centres[i + 1] + 0.5;
+			double wz = pose.helmZ() + centres[i + 2] + 0.5;
 
 			for (double ox : SAMPLE_OFFSETS) {
+				int x = (int) Math.floor(wx + ox * across);
 				for (double oy : SAMPLE_OFFSETS) {
+					int y = (int) Math.floor(wy + oy * 0.5);
 					for (double oz : SAMPLE_OFFSETS) {
-						positions.add(new BlockPos(
-							(int) Math.floor(worldPos.x + ox * across),
-							(int) Math.floor(worldPos.y + oy * 0.5),
-							(int) Math.floor(worldPos.z + oz * across)));
+						positions.add(BlockPos.asLong(x, y, (int) Math.floor(wz + oz * across)));
 					}
 				}
 			}
@@ -119,24 +127,38 @@ public class ShipCollision {
 		return positions;
 	}
 
+	/** Each hull block turned to this heading about the helm, as x, y, z triples; kept until the heading or the hull changes. */
+	private double[] centresAt(float yawRadians) {
+		if (rotatedCentres != null && Float.floatToRawIntBits(yawRadians) == rotatedYawBits) return rotatedCentres;
+		double[] centres = new double[hullBlocks.size() * 3];
+		int i = 0;
+		for (RelativeBlockPos hullPos : hullBlocks) {
+			Vec3 rotated = hullPos.rotateY(yawRadians);
+			centres[i++] = rotated.x;
+			centres[i++] = rotated.y;
+			centres[i++] = rotated.z;
+		}
+		rotatedCentres = centres;
+		rotatedYawBits = Float.floatToRawIntBits(yawRadians);
+		return centres;
+	}
+
 	/**
-	 * Checks if moving the ship would collide with world terrain. Fragile blocks
+	 * Checks if moving the ship would collide with world terrain or another ship. Fragile blocks
 	 * (plants, kelp, cobwebs, etc.) and loose terrain ({@link ShipBlockUtils#isKnockedLooseByShip})
 	 * are broken and dropped instead of blocking movement, whether or not something else stops it.
 	 *
+	 * @param otherShipPositions Combined hull positions of all nearby ships
 	 * @return true if collision detected (movement blocked), false if path is clear
 	 */
-	public boolean checkCollisionAndBreakFragile(Level world, ShipPose pose,
-							  double deltaX, double deltaY, double deltaZ) {
-		ShipPose movedPose = new ShipPose(
-			pose.helmX() + deltaX, pose.helmY() + deltaY,
-			pose.helmZ() + deltaZ, pose.yawRadians());
-
-		Set<BlockPos> positionsToCheck = gatherCollisionPositions(movedPose);
+	public boolean checkMoveBlocked(Level world, ShipPose movedPose, LongSet otherShipPositions) {
+		LongSet positionsToCheck = gatherCollisionPositions(movedPose);
+		BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 		List<BlockPos> toBreak = new ArrayList<>();
 		boolean blocked = false;
 
-		for (BlockPos pos : positionsToCheck) {
+		for (LongIterator it = positionsToCheck.iterator(); it.hasNext(); ) {
+			pos.set(it.nextLong());
 			if (!world.isLoaded(pos)) {
 				return true;
 			}
@@ -152,7 +174,7 @@ public class ShipCollision {
 
 			if (ShipBlockUtils.isBreakableByShip(worldBlock)
 					|| ShipBlockUtils.isKnockedLooseByShip(world, pos, worldBlock)) {
-				toBreak.add(pos);
+				toBreak.add(pos.immutable());
 				continue;
 			}
 
@@ -162,13 +184,13 @@ public class ShipCollision {
 		// Broken only once every block has been judged against the world as it was, so knocking
 		// one loose cannot loosen the next in the same move and let a hull chew through a reef.
 		if (world instanceof ServerLevel) {
-			for (BlockPos pos : toBreak) world.destroyBlock(pos, true, null, 512);
+			for (BlockPos broken : toBreak) world.destroyBlock(broken, true, null, 512);
 		}
-		return blocked;
+		return blocked || overlapsShips(positionsToCheck, otherShipPositions);
 	}
 
 	/**
-	 * Whether turning to this heading would put the hull through anything solid.
+	 * Whether turning to this heading would put the hull through anything solid or another ship.
 	 *
 	 * <p>Fragile blocks and loose terrain are passed over rather than broken: unlike a move, a
 	 * turn neither stops for them nor destroys them, so a ship turning through kelp leaves the
@@ -177,10 +199,12 @@ public class ShipCollision {
 	 *
 	 * @return true if something solid is in the way, false if the turn is clear
 	 */
-	public boolean checkCollisionAtRotation(Level world, ShipPose pose) {
-		Set<BlockPos> positionsToCheck = gatherCollisionPositions(pose);
+	public boolean checkTurnBlocked(Level world, ShipPose pose, LongSet otherShipPositions) {
+		LongSet positionsToCheck = gatherCollisionPositions(pose);
+		BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 
-		for (BlockPos pos : positionsToCheck) {
+		for (LongIterator it = positionsToCheck.iterator(); it.hasNext(); ) {
+			pos.set(it.nextLong());
 			if (!world.isLoaded(pos)) {
 				return true;
 			}
@@ -194,28 +218,19 @@ public class ShipCollision {
 
 			return true;
 		}
-		return false;
+		return overlapsShips(positionsToCheck, otherShipPositions);
 	}
 
 	/** Asked by other ships, to find out whether they would be sailing through this one. */
-	public Set<BlockPos> getWorldHullPositions(ShipPose pose) {
+	public LongSet getWorldHullPositions(ShipPose pose) {
 		return gatherCollisionPositions(pose);
 	}
 
-	/**
-	 * Checks if the ship at the proposed pose overlaps positions occupied by
-	 * other ships: if any hull sample position falls inside another ship's
-	 * hull, movement is blocked.
-	 *
-	 * @param otherShipPositions Combined hull positions of all nearby ships
-	 * @return true if collision detected (movement blocked)
-	 */
-	public boolean checkShipCollision(ShipPose movedPose, Set<BlockPos> otherShipPositions) {
+	/** Whether any of our hull sample positions falls inside another ship's hull. */
+	private static boolean overlapsShips(LongSet ourPositions, LongSet otherShipPositions) {
 		if (otherShipPositions.isEmpty()) return false;
-
-		Set<BlockPos> ourPositions = gatherCollisionPositions(movedPose);
-		for (BlockPos pos : ourPositions) {
-			if (otherShipPositions.contains(pos)) {
+		for (LongIterator it = ourPositions.iterator(); it.hasNext(); ) {
+			if (otherShipPositions.contains(it.nextLong())) {
 				return true;
 			}
 		}
