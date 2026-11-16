@@ -1,5 +1,7 @@
 package justfatlard.big_boats.mixin;
 
+import com.llamalad7.mixinextras.injector.ModifyReturnValue;
+import com.llamalad7.mixinextras.sugar.Local;
 import justfatlard.big_boats.ship.ShipCollisionEntities;
 import justfatlard.big_boats.ship.ShipRiders;
 import net.minecraft.server.level.ServerPlayer;
@@ -7,8 +9,6 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.monster.Shulker;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * The invisible boxes holding a deck up are not solid to a player whose client walks the deck
@@ -22,11 +22,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(Shulker.class)
 public abstract class HullCollisionDeckWalkerMixin {
 
-	@Inject(method = "canBeCollidedWith", at = @At("HEAD"), cancellable = true)
-	private void bigboats$notSolidToDeckWalkers(Entity other, CallbackInfoReturnable<Boolean> cir) {
-		if (other instanceof ServerPlayer player && ShipRiders.walksDecks(player)
-				&& ShipCollisionEntities.isHullCollision(((Entity) (Object) this).getUUID())) {
-			cir.setReturnValue(false);
-		}
+	@ModifyReturnValue(method = "canBeCollidedWith", at = @At("RETURN"))
+	private boolean bigboats$notSolidToDeckWalkers(boolean original, @Local(argsOnly = true) Entity other) {
+		return original && !(other instanceof ServerPlayer player && ShipRiders.walksDecks(player)
+				&& ShipCollisionEntities.isHullCollision(((Entity) (Object) this).getUUID()));
 	}
 }

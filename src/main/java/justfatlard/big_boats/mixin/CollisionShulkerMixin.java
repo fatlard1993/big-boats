@@ -1,11 +1,10 @@
 package justfatlard.big_boats.mixin;
 
+import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 import justfatlard.big_boats.ship.ShipCollisionEntities;
 import net.minecraft.world.entity.LivingEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * The invisible boxes holding a deck up are not things you can point at.
@@ -22,11 +21,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(LivingEntity.class)
 public abstract class CollisionShulkerMixin {
 
-	@Inject(method = "isPickable", at = @At("HEAD"), cancellable = true)
-	private void bigboats$hullCollisionIsNotATarget(CallbackInfoReturnable<Boolean> cir) {
-		LivingEntity self = (LivingEntity) (Object) this;
-		if (ShipCollisionEntities.isHullCollision(self.getUUID())) {
-			cir.setReturnValue(false);
-		}
+	@ModifyReturnValue(method = "isPickable", at = @At("RETURN"))
+	private boolean bigboats$hullCollisionIsNotATarget(boolean original) {
+		return original && !ShipCollisionEntities.isHullCollision(((LivingEntity) (Object) this).getUUID());
 	}
 }
