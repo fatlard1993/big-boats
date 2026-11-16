@@ -10,6 +10,8 @@
 		"fabric-client-gametest": [
 			"justfatlard.big_boats.gametest.LaddersAtSea",
 			"justfatlard.big_boats.gametest.DryHoldAtSea",
+			"justfatlard.big_boats.gametest.DrawnAtSea",
+			"justfatlard.big_boats.gametest.CrewAtSea",
 			"justfatlard.big_boats.gametest.LootStaysTaken",
 			"justfatlard.big_boats.gametest.WorksAtSea",
 			"justfatlard.big_boats.gametest.LocksAndLootAtSea",

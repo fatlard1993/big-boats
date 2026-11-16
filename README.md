@@ -36,7 +36,7 @@ A Minecraft Fabric mod that lets you build and sail multi-block ships. Build any
 - A keel: a ship barely slides sideways, so at speed it turns where it points rather than drifting
 - **Collision detection** stops ships at terrain and other ships (breaks through plants, coral and loose rock)
 - Ships **snap to grid** when you dismount for clean docking
-- Anyone standing on the deck is carried along, through the snap to the grid included. On a current Pandorical client you walk the deck you see: your client holds you on it and moves you with it
+- Anyone standing on the deck is carried along, through the snap to the grid included. On a current Pandorical client you walk the deck you see: your client holds you on it and moves you with it. Mobs and dropped items stand on every block of her, cabins and inner walls included. A client too old to walk structures cannot stand on her at sea; sit on a cushion instead
 - **Coral and loose rock give way**: coral, coral fans and sea pickles are knocked aside like kelp, and natural terrain (coral block, stone, dirt, sand, gravel, clay, sandstone, magma) held on by no more than two faces breaks when the hull hits it, so reefs and shallows can be threaded. Anything more firmly set, or built rather than grown, stops the ship
 - A ship holds the height it was christened at
 - **A dry hold**: below the waterline she is air, not sea. Walk the hold, see across it and breathe in it while she sails; an open boat stays dry too, as long as her sides stand above the water, and what was dry at sea is still dry when she docks
@@ -51,7 +51,7 @@ A ship at sea is still a working ship. Walk her deck and use what is on it the w
 - **Ladders and vines** climb
 - A chest locked with [Chest Utils](https://github.com/fatlard1993/chest-utils) 1.1.1 or newer stays locked at sea and is still locked to its owner wherever she docks, and a [Loot Ender](https://github.com/fatlard1993/loot-ender) loot chest aboard opens as each player's own copy
 
-Clicking blocks at sea needs Pandorical on the client. Other mods' blocks join in through the `pandorical:usable_on_structures` block tag (to be clicked) and `big-boats-justfatlard:ticks_at_sea` (to keep running while she sails).
+Clicking blocks at sea needs Pandorical on the client. Other mods' blocks join in through the `pandorical:usable_on_structures` block tag (to be clicked) and `big-boats-justfatlard:ticks_at_sea` (to keep running while she sails). A block its own mod draws as something else through Pandorical's structure drawings, such as a [Minicraft](https://github.com/fatlard1993/minicraft) miniature showing its little build, is drawn that way at sea too.
 
 ### Docking System
 - Ships **auto-dock** when you dismount (places real blocks back)

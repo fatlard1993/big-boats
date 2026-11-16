@@ -6,7 +6,6 @@ import justfatlard.pandorical.api.PandoricalApi;
 import justfatlard.pandorical.api.RelPos;
 import justfatlard.pandorical.api.StructurePose;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
@@ -24,10 +23,16 @@ import java.util.Map;
  * client renderer draws a block's model at {@code origin + Rotate(yaw) * (relPos + v)},
  * turning it about the origin; that origin is chosen so the result is the same block
  * centre collision and docking use.</p>
+ *
+ * <p>Each entry is made through Pandorical's drawing registry from the block's state and saved
+ * block entity data, so a block another mod draws as something else (a miniature as its build) is
+ * drawn that way at sea without this knowing what it is.</p>
  */
 public class ShipStructure {
 	private final String structureId;
 	private boolean spawned = false;
+	/** Where an entry went out with a drawing, so a change of state there is sent with the drawing it has now. */
+	private final java.util.Set<RelPos> drawn = new java.util.HashSet<>();
 
 	public ShipStructure(String structureId) {
 		this.structureId = structureId;
@@ -45,11 +50,17 @@ public class ShipStructure {
 		return new RelPos(pos.x(), pos.y(), pos.z());
 	}
 
-	private static List<BlockEntry> toBlockEntries(List<ShipBlock> blocks) {
+	private BlockEntry toBlockEntry(ShipBlock block) {
+		BlockEntry entry = PandoricalApi.structures().drawings()
+			.entry(toRelPos(block.relativePos()), block.blockState(), block.blockEntityData().orElse(null));
+		if (entry.drawing() != null) drawn.add(entry.pos());
+		else drawn.remove(entry.pos());
+		return entry;
+	}
+
+	private List<BlockEntry> toBlockEntries(List<ShipBlock> blocks) {
 		List<BlockEntry> entries = new ArrayList<>(blocks.size());
-		for (ShipBlock block : blocks) {
-			entries.add(new BlockEntry(toRelPos(block.relativePos()), block.blockState()));
-		}
+		for (ShipBlock block : blocks) entries.add(toBlockEntry(block));
 		return entries;
 	}
 
@@ -62,6 +73,7 @@ public class ShipStructure {
 	/** Registers and broadcasts this structure. No-op if already spawned. */
 	public void spawn(Entity anchorEntity, List<ShipBlock> blocks, ShipPose initialPose) {
 		if (spawned) return;
+		drawn.clear();
 		PandoricalApi.structures().spawn(anchorEntity, structureId, toBlockEntries(blocks), toStructurePose(initialPose));
 		PandoricalApi.structures().setWalkable(structureId, true);
 		spawned = true;
@@ -79,10 +91,20 @@ public class ShipStructure {
 		PandoricalApi.structures().setVisible(structureId, visible);
 	}
 
-	/** Updates a single block's state in place (e.g. toggling a door). */
-	public void updateBlockState(RelativeBlockPos relPos, BlockState newState) {
+	/**
+	 * Updates a single block's state in place (e.g. toggling a door). One drawn as something else,
+	 * then or now, goes out whole, so its drawing follows the change.
+	 */
+	public void updateBlockState(ShipBlock block) {
 		if (!spawned) return;
-		PandoricalApi.structures().updateBlocks(structureId, List.of(), List.of(), Map.of(toRelPos(relPos), newState));
+		RelPos pos = toRelPos(block.relativePos());
+		boolean wasDrawn = drawn.contains(pos);
+		BlockEntry entry = toBlockEntry(block);
+		if (wasDrawn || entry.drawing() != null) {
+			PandoricalApi.structures().updateBlocks(structureId, List.of(entry), List.of(), Map.of());
+		} else {
+			PandoricalApi.structures().updateBlocks(structureId, List.of(), List.of(), Map.of(pos, block.blockState()));
+		}
 	}
 
 	/** Adds newly absorbed blocks (e.g. from a rescan). */
@@ -96,6 +118,7 @@ public class ShipStructure {
 		if (!spawned || removedPositions.isEmpty()) return;
 		List<RelPos> removed = new ArrayList<>(removedPositions.size());
 		for (RelativeBlockPos pos : removedPositions) removed.add(toRelPos(pos));
+		drawn.removeAll(removed);
 		PandoricalApi.structures().updateBlocks(structureId, List.of(), removed, Map.of());
 	}
 

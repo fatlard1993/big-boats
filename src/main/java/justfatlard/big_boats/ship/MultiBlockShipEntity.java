@@ -932,7 +932,7 @@ public class MultiBlockShipEntity extends Entity {
 			blocks = List.copyOf(updated);
 
 			if (structure != null) {
-				structure.updateBlockState(oldBlock.relativePos(), newState);
+				structure.updateBlockState(updated.get(index));
 			}
 		}
 	}
