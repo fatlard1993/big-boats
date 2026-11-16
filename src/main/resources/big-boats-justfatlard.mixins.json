@@ -4,10 +4,7 @@
   "compatibilityLevel": "JAVA_25",
   "mixins": [
     "BlockAttachedEntityAccessor",
-    "CollisionShulkerMixin",
     "CushionSurvivesMixin",
-    "HullCollisionDeckWalkerMixin",
-    "HullCollisionUnsentMixin",
     "HangingEntityAccessor",
     "InteractionAccessor",
     "ServerGamePacketListenerMixin",

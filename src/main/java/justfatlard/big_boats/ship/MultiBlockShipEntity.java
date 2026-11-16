@@ -111,7 +111,7 @@ public class MultiBlockShipEntity extends Entity {
 	private final ShipCollision collision = new ShipCollision();
 	private final ShipLighting lighting = new ShipLighting();
 
-	private final ShipCollisionEntities collisionEntities = new ShipCollisionEntities();
+	private final ShipChildEntities children = new ShipChildEntities();
 
 	private final ShipDocking docking = new ShipDocking();
 	/** Her blocks' stretch of the world while she sails, so they work at sea; null in port. */
@@ -152,7 +152,7 @@ public class MultiBlockShipEntity extends Entity {
 	private boolean blocksLeftWorld = false;
 
 	/**
-	 * Collision entities from a previous session that still need discarding, and how long we have
+	 * Entities from a previous session that still need discarding, and how long we have
 	 * been asking. Empty on all but the first seconds after a load.
 	 */
 	private List<UUID> pendingOrphans = List.of();
@@ -364,7 +364,7 @@ public class MultiBlockShipEntity extends Entity {
 		if (structure != null) {
 			structure.setVisible(false);
 		}
-		collisionEntities.discardAll();
+		children.discardAll();
 	}
 
 	/**
@@ -463,8 +463,8 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		ShipPose currentPose = pose();
-		collisionEntities.spawnAll(world, blocks, currentPose, collision.getHullBlocks());
-		collisionEntities.updatePositions(currentPose);
+		children.spawnHelm(world, currentPose);
+		warnDeckStanders(world);
 
 		lighting.detectFromBlocks(blocks);
 		lighting.spawnLightBlocks(world, currentPose);
@@ -480,9 +480,22 @@ public class MultiBlockShipEntity extends Entity {
 		return new ShipPose(helmX, this.getY(), helmZ, yawRadians);
 	}
 
-	/** Whether this entity is one of the ship's own: collision hulls, the helm interaction. */
+	/** Whether this entity is one of the ship's own: the helm interaction. */
 	public boolean ownsChildEntity(Entity entity) {
-		return collisionEntities.ownsChildEntity(entity.getUUID());
+		return children.ownsChildEntity(entity.getUUID());
+	}
+
+	/**
+	 * Tell anyone standing aboard as she casts off whose client cannot stand on a moving deck:
+	 * at sea the deck is only solid to a client that walks structures, and without one a player
+	 * left standing drops through it.
+	 */
+	private void warnDeckStanders(ServerLevel world) {
+		for (ServerPlayer player : world.getEntitiesOfClass(ServerPlayer.class, this.getBoundingBox().inflate(hullReach()),
+				p -> p.getVehicle() == null && !ShipRiders.walksDecks(p))) {
+			player.sendSystemMessage(Component.translatable("big-boats.ship.deck_needs_pandorical")
+				.withStyle(ChatFormatting.YELLOW), true);
+		}
 	}
 
 	/**
@@ -621,9 +634,6 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		if (removedCount > 0) {
-			Set<RelativeBlockPos> survivingPositions = new HashSet<>();
-			for (ShipBlock b : survivingBlocks) survivingPositions.add(b.relativePos());
-			collisionEntities.removeStaleShulkers(survivingPositions);
 			LOGGER.debug("Removed {} missing blocks during rescan", removedCount);
 		}
 
@@ -698,9 +708,6 @@ public class MultiBlockShipEntity extends Entity {
 		if (this.level() instanceof ServerLevel && !blocks.isEmpty()) {
 			this.structure = new ShipStructure("bigboats:" + this.getUUID());
 			this.structure.spawn(this, new ArrayList<>(blocks), pose());
-			// Collision entities are spawned in undock(), not here.
-			// Docked ships use real blocks for collision; spawning shulkers here
-			// would waste server entity budget on idle docked ships.
 		}
 	}
 
@@ -863,9 +870,6 @@ public class MultiBlockShipEntity extends Entity {
 		updated.remove(index);
 		replaceBlocks(List.copyOf(updated));
 		collision.computeHullBlocks(blocks);
-		Set<RelativeBlockPos> surviving = new HashSet<>();
-		for (ShipBlock block : blocks) surviving.add(block.relativePos());
-		collisionEntities.removeStaleShulkers(surviving);
 		if (structure != null) structure.removeBlocks(List.of(gone));
 		if (this.level() instanceof ServerLevel world) refreshDry(world);
 	}
@@ -1062,7 +1066,7 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		// Anchor the entity at the passenger seat with setPos, never move(): swept collision
-		// against terrain or this ship's own collision shulkers can block move() and strand
+		// against terrain or this ship's own deck can block move() and strand
 		// the anchor (and the mounted pilot, positioned via positionRider) behind the
 		// rendered deck. Hull collision already gated helmX/helmZ/newY above.
 		Vec3 seatWorld = computeSeatWorldPos();
@@ -1077,32 +1081,18 @@ public class MultiBlockShipEntity extends Entity {
 
 		ShipPose tickPose = pose();
 
-		// A collision box that went missing since last tick leaves a hole in the deck; rebuilding
-		// the hull is the only way to put one back, and it is rare enough to afford.
-		if (collisionEntities.hasMissingCollision() && this.level() instanceof ServerLevel rebuildWorld) {
-			LOGGER.warn("A collision box went missing under a sailing ship — rebuilding the hull");
-			collisionEntities.clearMissingCollision();
-			collisionEntities.spawnAll(rebuildWorld, blocks, tickPose, collision.getHullBlocks());
-		}
-
-		// The collision and the furniture are placed AHEAD of the ship, by as far as it travels
-		// while a client is catching up to them.
-		//
-		// The rendered deck is posed exactly every tick; the entities that back it are ordinary
-		// entities, and a client does not put those where it is told - it slides them there over
-		// about three ticks. So the thing you see and the thing you stand on came apart the moment
-		// the ship got moving: the floor you could see was solid and the floor underneath you was
-		// three ticks astern, which is how a rider standing still falls through it, and how a
-		// cushion ends up sitting a block off the deck it is bolted to. Sending them where the ship
-		// WILL be is what makes them arrive where it IS.
+		// The helm's click box is placed AHEAD of the ship, by as far as it travels while a client
+		// is catching up to it: the rendered deck is posed exactly every tick, but a client slides
+		// an ordinary entity to where it is told over a few ticks, so one sent where the ship is
+		// would be drawn astern of the helm it stands for.
 		ShipPose leadPose = leadBy(entryPose, tickPose, ShipConfig.CLIENT_INTERP_TICKS);
-		collisionEntities.tickUpdate(leadPose);
+		children.updatePositions(leadPose);
 		// Not ahead: a cushion blends the way the deck blends, so where the deck is sent is
 		// where the cushion is drawn on it.
 		seats.updatePositions(tickPose);
 
-		// After the collision entities, so anything standing on the deck is being carried toward
-		// hull that has already arrived rather than hull it would fall through.
+		// After the structure's pose, so anything standing on the deck is carried onto the deck
+		// as it now stands, which is the deck Pandorical holds it up on.
 		if (this.level() instanceof ServerLevel riderWorld) {
 			riders.carry(riderWorld, this, blocks, entryPose, tickPose,
 				this.getBoundingBox().inflate(hullReach()));
@@ -1134,15 +1124,15 @@ public class MultiBlockShipEntity extends Entity {
 	private void sweepOrphanedChildren() {
 		if (pendingOrphans.isEmpty() || !(this.level() instanceof ServerLevel world)) return;
 
-		pendingOrphans = collisionEntities.cleanupOrphanedEntities(world, pendingOrphans);
+		pendingOrphans = children.cleanupOrphanedEntities(world, pendingOrphans);
 		if (pendingOrphans.isEmpty()) {
 			orphanSweepTicks = 0;
 			return;
 		}
 
 		if (++orphanSweepTicks >= ShipConfig.ORPHAN_SWEEP_TICKS) {
-			LOGGER.warn("Gave up looking for {} collision entities from a previous session; "
-				+ "if any are still in the world they are invisible and solid", pendingOrphans.size());
+			LOGGER.warn("Gave up looking for {} ship entities from a previous session; "
+				+ "if any are still in the world they are left behind", pendingOrphans.size());
 			pendingOrphans = List.of();
 			orphanSweepTicks = 0;
 		}
@@ -1153,11 +1143,11 @@ public class MultiBlockShipEntity extends Entity {
 	 *
 	 * <p>Vanilla goes looking for solid ground beside the vehicle to put the passenger down on,
 	 * and at the moment of dismount there is none to find: the ship is still blocks-in-waiting and
-	 * the only thing holding anyone up is a set of invisible collision entities, which that search
-	 * does not count as ground. Finding nothing, it drops them to whatever is under the hull, which
-	 * out at sea is the sea. Standing them exactly where they already are is right in both
-	 * directions - docking puts the deck back under their feet a moment later, and a dismount that
-	 * does not dock leaves them on the collision they were already standing on.
+	 * the deck is a structure, which that search does not count as ground. Finding nothing, it
+	 * drops them to whatever is under the hull, which out at sea is the sea. Standing them exactly
+	 * where they already are is right in both directions - docking puts the deck back under their
+	 * feet a moment later, and a dismount that does not dock leaves them on the deck they were
+	 * already standing on.
 	 */
 	@Override
 	public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
@@ -1217,7 +1207,7 @@ public class MultiBlockShipEntity extends Entity {
 		this.lock = view.read("lock", ShipLock.CODEC).orElse(null);
 
 		// Held for the tick to deal with, not swept here: during a load neither this ship nor the
-		// shulkers it is asking about are in the level's lookup yet, so every answer would be null
+		// entities it is asking about are in the level's lookup yet, so every answer would be null
 		// and every orphan would be written off as already gone.
 		List<UUID> orphans = new ArrayList<>(view.read("child_uuids", UUID_LIST_CODEC).orElse(List.of()));
 		orphans.addAll(view.read("pending_orphans", UUID_LIST_CODEC).orElse(List.of()));
@@ -1274,7 +1264,7 @@ public class MultiBlockShipEntity extends Entity {
 			view.putString("ship_name", shipName);
 		}
 
-		List<UUID> childUUIDs = collisionEntities.getTrackedChildEntityUUIDs();
+		List<UUID> childUUIDs = children.getTrackedChildEntityUUIDs();
 		if (!childUUIDs.isEmpty()) {
 			view.store("child_uuids", UUID_LIST_CODEC, childUUIDs);
 		}
@@ -1386,11 +1376,7 @@ public class MultiBlockShipEntity extends Entity {
 	}
 
 	public boolean isHelmInteraction(Entity entity) {
-		return collisionEntities.isHelmInteraction(entity);
-	}
-
-	public boolean isCollisionShulker(Entity entity) {
-		return collisionEntities.isCollisionShulker(entity);
+		return children.isHelmInteraction(entity);
 	}
 
 	public double getHelmX() { return helmX; }
@@ -1543,7 +1529,7 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		// Idempotent; safe even if dock/undock already handled these
-		collisionEntities.discardAll();
+		children.discardAll();
 		// Otherwise the cushions stay exempt from the ground check for the rest of the session,
 		// held by a ship that no longer exists.
 		seats.release();

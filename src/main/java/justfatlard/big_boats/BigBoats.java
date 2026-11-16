@@ -245,14 +245,13 @@ public class BigBoats implements ModInitializer {
 		net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPING.register(server ->
 			justfatlard.big_boats.ship.sea.AtSea.closeAll());
 
-		// Three static registries and a half-finished sweep, all of which outlive a world that
+		// Two static registries and a half-finished sweep, all of which outlive a world that
 		// is only unloaded rather than exited. In single player that means the next world starts
 		// holding the last one's ids.
 		net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
 			resetCleanup();
 			PlayerInputStorage.forgetAll();
 			justfatlard.big_boats.ship.ShipSeats.forgetAll();
-			justfatlard.big_boats.ship.ShipCollisionEntities.forgetAll();
 		});
 
 		LOGGER.info("[" + MOD_ID + "] Loaded");

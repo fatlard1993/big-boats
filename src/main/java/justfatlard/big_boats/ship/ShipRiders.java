@@ -6,43 +6,30 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import justfatlard.big_boats.util.PlayerInputStorage;
 import justfatlard.big_boats.util.RelativeBlockPos;
 import justfatlard.pandorical.api.Capabilities;
 import justfatlard.pandorical.api.PandoricalApi;
-import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
-import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.decoration.Cushion;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Everything standing on the deck, carried along as the ship moves under it.
+ * Everything standing on the deck that is not a player, carried along as the ship moves under it.
  *
  * <p>A seated rider needs none of this: sit on a cushion and you are that cushion's passenger, and
  * vanilla moves passengers with their vehicle. Standing is the hard case, because a deck is not a
- * vehicle and the thing standing on it has no idea it is on a ship at all.
+ * vehicle and the thing standing on it has no idea it is on a ship at all. Pandorical holds it up;
+ * this moves it with the boards, setting its position outright, since for anything but a player
+ * the server's word is final.
  *
- * <h2>Why velocity and not position</h2>
- * <p>A player's position is the client's to decide; the server is told where they are, not the
- * other way round. Moving one server-side does nothing - the next movement packet arrives with the
- * old position and quietly undoes it. The sanctioned way to say otherwise is a teleport, and a
- * teleport stops the server accepting the player's own movement until the client acknowledges it,
- * which at twenty a second means never: the deck would carry them and they would not be able to
- * walk on it.
- *
- * <p>So the ship's movement is handed over as velocity, which the client applies on top of whatever
- * it was already doing. It is the one channel that moves a player without taking control away from
- * them. Anything that is not a player is positioned outright, since for those the server's word is
- * final.
- *
- * <p>All of that is the fallback. A Pandorical client that walks structures carries its own player
- * across the deck it draws, in step with it frame by frame, which velocity sent from here never
- * was; such a player is left entirely to their client ({@link #walksDecks}).
+ * <p>Players are not carried from here. A Pandorical client that walks structures carries its own
+ * player across the deck it draws, in step with it frame by frame ({@link #walksDecks}); a player
+ * without one has no deck under them at sea at all, and is told so as she casts off.
  */
 public final class ShipRiders {
 
@@ -72,13 +59,6 @@ public final class ShipRiders {
 	/** Below this the ship has not really moved, and nudging everyone aboard is noise. */
 	private static final double MOVED_EPSILON = 1.0E-4;
 
-	/** A rider's own vertical speed, held inside what jumping and falling can actually produce. */
-	private static final double OWN_RISE_LIMIT = 1.0;
-	private static final double OWN_FALL_LIMIT = -3.0;
-
-	/** The ship dropping faster than this is the deck falling away, not the rider falling. */
-	private static final double SHIP_DESCENDING = -0.05;
-
 	private int knownLayout = -1;
 	private Set<RelativeBlockPos> occupied = Set.of();
 
@@ -86,11 +66,8 @@ public final class ShipRiders {
 	private static final class Carried {
 		/** Where they are meant to be standing, in the ship's own unrotated frame. */
 		Vec3 anchor;
-		/** Where we last told them to be, so a shortfall can be told from a step taken. */
+		/** Where we last put them, so a shortfall can be told from a step taken. */
 		Vec3 commanded;
-		/** Their position last tick, and the vertical part of what we asked of them. */
-		Vec3 lastPosition;
-		double commandedRise;
 	}
 
 	private final Map<UUID, Carried> riders = new HashMap<>();
@@ -118,16 +95,13 @@ public final class ShipRiders {
 			return;
 		}
 
-		float turn = Mth.wrapDegrees((float) Math.toDegrees(to.yawRadians() - from.yawRadians()));
 		Set<UUID> aboard = new HashSet<>();
 
-		// A passenger is already being carried by whatever it is riding - the pilot by the ship, a
-		// seated player by their cushion - and moving it again would double the trip. The ship's
-		// own boxes are turned away here, before a list is made of every one under her deck.
+		// A passenger is already being carried by whatever it is riding - a mob on a cushion, the
+		// pilot by the ship - and moving it again would double the trip. Players are their
+		// clients' to carry; see the class comment.
 		for (Entity rider : world.getEntities(ship, searchBox,
-				e -> couldRide(e) && e.getVehicle() == null && !ship.ownsChildEntity(e))) {
-			if (rider instanceof ServerPlayer player && walksDecks(player)) continue;
-
+				e -> couldRide(e) && e.getVehicle() == null && !ship.ownsChildEntity(e) && !(e instanceof Player))) {
 			UUID id = rider.getUUID();
 			Carried state = riders.get(id);
 			Vec3 position = rider.position();
@@ -148,23 +122,15 @@ public final class ShipRiders {
 			// tick was the whole of the sliding-off bug: a rider that fell short of last tick's
 			// carry had that shortfall written into the anchor as though it had walked backwards,
 			// so every tick lost a little more ground.
-			if (state.anchor == null || movedItself(rider, position, state.commanded)) {
+			if (state.anchor == null || movedItself(position, state.commanded)) {
 				state.anchor = local;
 			}
 
 			// Aimed at the anchor rather than fed the ship's displacement, so a rider that is
 			// behind is brought back rather than merely moved along in parallel with its gap.
 			Vec3 target = toWorld(state.anchor, to);
-			Vec3 delta = target.subtract(position);
-
-			if (rider instanceof ServerPlayer player) {
-				carryPlayer(player, state, position, delta, turn);
-			} else {
-				rider.setPos(target.x, target.y, target.z);
-			}
-
+			rider.setPos(target.x, target.y, target.z);
 			state.commanded = target;
-			state.lastPosition = position;
 		}
 
 		riders.keySet().retainAll(aboard);
@@ -212,38 +178,6 @@ public final class ShipRiders {
 		}
 	}
 
-	private void carryPlayer(ServerPlayer player, Carried state, Vec3 position, Vec3 delta,
-							 float turn) {
-		// The rider's own vertical motion, kept.
-		//
-		// Commanding all three axes outright looked right and quietly took jumping away: the client
-		// sets its motion from what we send, so a jump's upward push was replaced by the ship's
-		// flat nothing on the very next tick, and gravity was overwritten as fast as it applied.
-		// What we mean to say is "the floor moved", not "here is your velocity" - so the vertical
-		// sent is the floor's movement plus whatever the rider was doing under their own steam,
-		// measured as the part of last tick's movement we did not ask for.
-		double own = 0;
-		if (state.lastPosition != null) {
-			own = Mth.clamp((position.y - state.lastPosition.y) - state.commandedRise,
-				OWN_FALL_LIMIT, OWN_RISE_LIMIT);
-		}
-		state.commandedRise = delta.y;
-
-		Vec3 motion = new Vec3(delta.x, delta.y + own, delta.z);
-		player.setDeltaMovement(motion);
-		player.connection.send(new ClientboundSetEntityMotionPacket(player.getId(), motion));
-
-		// A deck dropping out from under someone is not a fall they took.
-		if (delta.y < SHIP_DESCENDING) player.resetFallDistance();
-
-		// And the deck turns them with it. Relative, so it adds to wherever they were already
-		// looking rather than seizing the view, and on its own packet rather than a teleport -
-		// which would have blocked their movement until the client answered it.
-		if (turn != 0) {
-			player.connection.send(new ClientboundPlayerRotationPacket(turn, true, 0, true));
-		}
-	}
-
 	/** Entities worth considering; the ship's own furniture and hardware move by other means. */
 	private static boolean couldRide(Entity entity) {
 		return !entity.isRemoved()
@@ -251,24 +185,10 @@ public final class ShipRiders {
 			&& !(entity instanceof MultiBlockShipEntity);
 	}
 
-	/**
-	 * Whether this rider went somewhere under its own power since we last placed it.
-	 *
-	 * <p>For anything but a player the test is exact: we set their position outright, so any
-	 * difference from what we set is theirs. A player is the awkward one, because the same
-	 * difference covers both a step they took and a step they failed to take. Their input settles
-	 * it - a player pressing nothing did not walk, so whatever moved them is drift and gets
-	 * corrected, and a player pressing something is walking and gets to keep it.
-	 */
-	private static boolean movedItself(Entity rider, Vec3 position, Vec3 lastCommanded) {
-		if (rider instanceof ServerPlayer player) return isWalking(player);
+	/** Whether this rider went somewhere under its own power since we last placed it. */
+	private static boolean movedItself(Vec3 position, Vec3 lastCommanded) {
 		if (lastCommanded == null) return true;
 		return position.distanceToSqr(lastCommanded) > SELF_MOVED * SELF_MOVED;
-	}
-
-	private static boolean isWalking(ServerPlayer player) {
-		var input = PlayerInputStorage.getInput(player);
-		return input.forward() || input.backward() || input.left() || input.right() || input.jump();
 	}
 
 	private Vec3 toLocal(Vec3 worldPos, ShipPose pose) {

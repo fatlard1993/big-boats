@@ -11,6 +11,7 @@
   "big-boats.ship.grounded": "Ship is grounded - disconnect from land to sail",
   "big-boats.ship.obstructed": "%d ship block(s) couldn't be placed - space was obstructed. Items dropped nearby.",
   "big-boats.ship.lost_contents": "%d container(s) lost contents during docking - items dropped nearby",
+  "big-boats.ship.deck_needs_pandorical": "Sit on a cushion to ride: standing on a deck at sea needs the Pandorical client.",
   "big-boats.ship.absorbed": "Absorbed %d new blocks into ship!",
   "big-boats.ship.absorption_capped": "%d adjacent blocks left behind - helm is rated for %d blocks",
   "big-boats.ship.piloting": "Now piloting ship",

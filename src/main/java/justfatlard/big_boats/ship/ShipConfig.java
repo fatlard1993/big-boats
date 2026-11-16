@@ -118,22 +118,12 @@ public final class ShipConfig {
 	// 8 blocks covers most dock/shore scenarios without catching sea floor in deep ocean.
 	public static final int MAX_GROUNDING_Y_RANGE = 8;
 
-	// --- Collision update thresholds (tick-spreading) ---
-	// Collision shulker positions update when ANY of these thresholds is exceeded.
-	// Balances visual accuracy vs. server load from repositioning many entities.
-
-
-
-	// Fallback: update at least every 5 ticks (4x/sec) even if thresholds aren't met.
-
 	/**
 	 * How far behind its latest position a client draws a moving entity, in ticks of travel.
 	 *
 	 * <p>A client slides an entity a third of the way to each new position per tick, and with a
-	 * new position every tick that settles two ticks of travel behind. The collision hull is sent
-	 * this far ahead so the sliding lands it under the feet of a rider who is carried at the
-	 * ship's real pace. It was three when the deck's own pose reached the client a tick before
-	 * the hull did; Pandorical now sends both in the same pass, and the extra tick is gone.
+	 * new position every tick that settles two ticks of travel behind. The helm's click box is
+	 * sent this far ahead so the sliding lands it on the helm the deck draws.
 	 *
 	 * <p>Cushions are not sent ahead at all. They blend by the deck's own rule, so sent where the
 	 * deck is they are drawn where the deck is drawn, and whoever sits on one sits on the boards.
