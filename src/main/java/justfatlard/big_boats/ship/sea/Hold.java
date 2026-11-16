@@ -63,7 +63,7 @@ public final class Hold {
 	private final Map<RelativeBlockPos, BlockEntity> live = new HashMap<>();
 	private final Set<RelativeBlockPos> dirty = new HashSet<>();
 	private Map<RelativeBlockPos, Integer> index = Map.of();
-	private List<ShipBlock> indexed = null;
+	private int indexedLayout = -1;
 	private boolean released;
 
 	Hold(MultiBlockShipEntity ship, ServerLevel level, int baseX, int baseZ) {
@@ -97,12 +97,12 @@ public final class Hold {
 	}
 
 	private int indexOf(RelativeBlockPos rel) {
-		List<ShipBlock> blocks = ship.getBlocks();
-		if (blocks != indexed) {
+		if (ship.blockLayout() != indexedLayout) {
+			List<ShipBlock> blocks = ship.getBlocks();
 			Map<RelativeBlockPos, Integer> fresh = new HashMap<>(blocks.size() * 2);
 			for (int i = 0; i < blocks.size(); i++) fresh.put(blocks.get(i).relativePos(), i);
 			index = fresh;
-			indexed = blocks;
+			indexedLayout = ship.blockLayout();
 		}
 		Integer i = index.get(rel);
 		return i == null ? -1 : i;

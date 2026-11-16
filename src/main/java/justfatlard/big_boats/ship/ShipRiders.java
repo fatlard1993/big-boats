@@ -79,7 +79,7 @@ public final class ShipRiders {
 	/** The ship dropping faster than this is the deck falling away, not the rider falling. */
 	private static final double SHIP_DESCENDING = -0.05;
 
-	private List<ShipBlock> knownBlocks;
+	private int knownLayout = -1;
 	private Set<RelativeBlockPos> occupied = Set.of();
 
 	/** What is known about one rider between ticks. */
@@ -112,7 +112,7 @@ public final class ShipRiders {
 			return;
 		}
 
-		indexBlocks(blocks);
+		indexBlocks(ship, blocks);
 		if (occupied.isEmpty()) {
 			riders.clear();
 			return;
@@ -121,11 +121,11 @@ public final class ShipRiders {
 		float turn = Mth.wrapDegrees((float) Math.toDegrees(to.yawRadians() - from.yawRadians()));
 		Set<UUID> aboard = new HashSet<>();
 
-		for (Entity rider : world.getEntities(ship, searchBox, ShipRiders::couldRide)) {
-			// A passenger is already being carried by whatever it is riding - the pilot by the
-			// ship, a seated player by their cushion - and moving it again would double the trip.
-			if (rider.getVehicle() != null) continue;
-			if (ship.ownsChildEntity(rider)) continue;
+		// A passenger is already being carried by whatever it is riding - the pilot by the ship, a
+		// seated player by their cushion - and moving it again would double the trip. The ship's
+		// own boxes are turned away here, before a list is made of every one under her deck.
+		for (Entity rider : world.getEntities(ship, searchBox,
+				e -> couldRide(e) && e.getVehicle() == null && !ship.ownsChildEntity(e))) {
 			if (rider instanceof ServerPlayer player && walksDecks(player)) continue;
 
 			UUID id = rider.getUUID();
@@ -187,14 +187,13 @@ public final class ShipRiders {
 		riders.clear();
 		if (!moved(from, to)) return;
 
-		indexBlocks(blocks);
+		indexBlocks(ship, blocks);
 		if (occupied.isEmpty()) return;
 
 		float turn = Mth.wrapDegrees((float) Math.toDegrees(to.yawRadians() - from.yawRadians()));
 
-		for (Entity rider : world.getEntities(ship, searchBox, ShipRiders::couldRide)) {
-			if (rider.getVehicle() != null) continue;
-			if (ship.ownsChildEntity(rider)) continue;
+		for (Entity rider : world.getEntities(ship, searchBox,
+				e -> couldRide(e) && e.getVehicle() == null && !ship.ownsChildEntity(e))) {
 			// Their client moves them through the snap, from the deck it drew.
 			if (rider != pilot && rider instanceof ServerPlayer player && walksDecks(player)) continue;
 
@@ -299,15 +298,15 @@ public final class ShipRiders {
 		return false;
 	}
 
-	/** Rebuilt only when the ship's block list is replaced, which is a dock or an absorb. */
-	private void indexBlocks(List<ShipBlock> blocks) {
-		if (blocks == knownBlocks) return;
+	/** Rebuilt only when blocks are added to or taken off the ship. */
+	private void indexBlocks(MultiBlockShipEntity ship, List<ShipBlock> blocks) {
+		if (ship.blockLayout() == knownLayout) return;
 
 		Set<RelativeBlockPos> rebuilt = new HashSet<>(blocks.size());
 		for (ShipBlock block : blocks) rebuilt.add(block.relativePos());
 
 		occupied = rebuilt;
-		knownBlocks = blocks;
+		knownLayout = ship.blockLayout();
 	}
 
 	private static boolean moved(ShipPose from, ShipPose to) {

@@ -103,6 +103,8 @@ public class MultiBlockShipEntity extends Entity {
 	// serialisation that no exception will ever report. Replace the ShipBlock instead; withPaint
 	// and withBlockEntityData exist for exactly that.
 	private volatile List<ShipBlock> blocks = List.of();
+	// Which blocks she has and in what order; see blockLayout().
+	private int blockLayout;
 	private ShipStructure structure;
 
 	private final ShipPhysics physics = new ShipPhysics();
@@ -177,7 +179,10 @@ public class MultiBlockShipEntity extends Entity {
 	// gatherNearbyShipHullPositions; kept for as long as the pose and the blocks they came from.
 	private LongSet cachedHullPositions = LongSets.EMPTY_SET;
 	private ShipPose cachedHullPose;
-	private List<ShipBlock> cachedHullBlocks;
+	private int cachedHullLayout = -1;
+
+	private double hullReach;
+	private int hullReachLayout = -1;
 
 	private int ticksSinceHelmCheck = 0;
 
@@ -204,7 +209,7 @@ public class MultiBlockShipEntity extends Entity {
 	public MultiBlockShipEntity(Level world, double x, double y, double z, List<ShipBlock> blocks, Direction helmFacing) {
 		this(BigBoats.MULTI_BLOCK_SHIP_ENTITY_TYPE, world);
 		this.setPos(x, y, z);
-		this.blocks = List.copyOf(blocks);
+		replaceBlocks(List.copyOf(blocks));
 		this.heldY = y;
 		this.helmFacing = helmFacing;
 
@@ -332,7 +337,7 @@ public class MultiBlockShipEntity extends Entity {
 			for (ShipBlock block : blocks) {
 				if (!paidOut.contains(block.relativePos())) remaining.add(block);
 			}
-			blocks = List.copyOf(remaining);
+			replaceBlocks(List.copyOf(remaining));
 		}
 		docking.restoreDecorations(world, helmX, this.getY(), helmZ, snap);
 
@@ -445,7 +450,7 @@ public class MultiBlockShipEntity extends Entity {
 		}
 
 		// Capture decorations, snapshot block entities, remove blocks from world
-		blocks = docking.removeBlocks(world, blocks, helmX, this.getY(), helmZ, snap, posToBlockIndex, seats);
+		replaceBlocks(docking.removeBlocks(world, blocks, helmX, this.getY(), helmZ, snap, posToBlockIndex, seats));
 		blocksLeftWorld = true;
 
 		// Position entity at passenger seat and sync structure
@@ -509,6 +514,7 @@ public class MultiBlockShipEntity extends Entity {
 	 * spar's length, and dropping it would lose whoever is up there.
 	 */
 	private double hullReach() {
+		if (hullReachLayout == blockLayout) return hullReach;
 		double acrossX = 1;
 		double acrossZ = 1;
 		double vertical = 1;
@@ -517,7 +523,9 @@ public class MultiBlockShipEntity extends Entity {
 			acrossZ = Math.max(acrossZ, Math.abs(block.relativePos().z()));
 			vertical = Math.max(vertical, Math.abs(block.relativePos().y()));
 		}
-		return Math.max(Math.hypot(acrossX, acrossZ), vertical) + 1;
+		hullReach = Math.max(Math.hypot(acrossX, acrossZ), vertical) + 1;
+		hullReachLayout = blockLayout;
+		return hullReach;
 	}
 
 	private Vec3 computeSeatWorldPos() {
@@ -671,7 +679,7 @@ public class MultiBlockShipEntity extends Entity {
 		if (removedCount > 0 || !newBlocks.isEmpty()) {
 			List<ShipBlock> updatedBlocks = new ArrayList<>(survivingBlocks);
 			updatedBlocks.addAll(newBlocks);
-			blocks = List.copyOf(updatedBlocks);
+			replaceBlocks(List.copyOf(updatedBlocks));
 
 			if (structure != null) {
 				if (!removedRelPositions.isEmpty()) structure.removeBlocks(removedRelPositions);
@@ -853,7 +861,7 @@ public class MultiBlockShipEntity extends Entity {
 		RelativeBlockPos gone = current.get(index).relativePos();
 		List<ShipBlock> updated = new ArrayList<>(current);
 		updated.remove(index);
-		blocks = List.copyOf(updated);
+		replaceBlocks(List.copyOf(updated));
 		collision.computeHullBlocks(blocks);
 		Set<RelativeBlockPos> surviving = new HashSet<>();
 		for (ShipBlock block : blocks) surviving.add(block.relativePos());
@@ -890,7 +898,10 @@ public class MultiBlockShipEntity extends Entity {
 		structure.setDry(waterline.isEmpty() ? Set.of() : DrySpace.of(hull, waterline.getAsInt() - helmY));
 	}
 
-	/** Her blocks, edited in one copy: what her block entities hold and the locks on them, as they stand at sea. */
+	/**
+	 * Her blocks, edited in one copy: what her block entities hold and the locks on them, as they
+	 * stand at sea. Each block stays at its index and its place; {@link #blockLayout} does not change.
+	 */
 	public void editBlocks(java.util.function.Consumer<List<ShipBlock>> edit) {
 		List<ShipBlock> updated = new ArrayList<>(blocks);
 		edit.accept(updated);
@@ -1169,7 +1180,7 @@ public class MultiBlockShipEntity extends Entity {
 
 	@Override
 	protected void readAdditionalSaveData(ValueInput view) {
-		this.blocks = List.copyOf(view.read(BLOCKS_KEY, BLOCKS_CODEC).orElse(List.of()));
+		replaceBlocks(List.copyOf(view.read(BLOCKS_KEY, BLOCKS_CODEC).orElse(List.of())));
 
 		collision.computeHullBlocks(blocks);
 
@@ -1348,6 +1359,20 @@ public class MultiBlockShipEntity extends Entity {
 		return hold;
 	}
 
+	/**
+	 * Changes only when blocks are added, removed or reordered, not when one changes state or what
+	 * its block entity holds: anything indexed by a block's place or position in
+	 * {@link #getBlocks} stays good for as long as this does.
+	 */
+	public int blockLayout() {
+		return blockLayout;
+	}
+
+	private void replaceBlocks(List<ShipBlock> fresh) {
+		blocks = fresh;
+		blockLayout++;
+	}
+
 	public List<ShipBlock> getBlocks() {
 		return Collections.unmodifiableList(blocks);
 	}
@@ -1411,11 +1436,10 @@ public class MultiBlockShipEntity extends Entity {
 	 */
 	private LongSet getOrComputeHullPositions() {
 		ShipPose now = pose();
-		List<ShipBlock> current = blocks;
-		if (!now.equals(cachedHullPose) || current != cachedHullBlocks) {
+		if (!now.equals(cachedHullPose) || blockLayout != cachedHullLayout) {
 			cachedHullPositions = collision.getWorldHullPositions(now);
 			cachedHullPose = now;
-			cachedHullBlocks = current;
+			cachedHullLayout = blockLayout;
 		}
 		return cachedHullPositions;
 	}
