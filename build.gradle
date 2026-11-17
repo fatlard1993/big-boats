@@ -143,17 +143,20 @@ fabricApi {
 	}
 }
 
-// The game tests sail a locked chest and a loot chest, so they load the two mods that make them so.
+// The game tests sail a locked chest, a loot chest and a knick-knack, so they load the mods that make them so.
 // Test-only: the mod itself still only suggests either.
 dependencies {
-	for (String mod : ["chest-utils", "loot-ender"]) {
+	for (String mod : ["chest-utils", "loot-ender", "knick-knacks"]) {
 		def properties = file("../${mod}/gradle.properties")
 		if (!properties.exists()) continue
-		def version = new Properties().with {
+		def props = new Properties().with {
 			properties.withInputStream { load(it) }
-			getProperty("mod_version")
+			it
 		}
+		def version = props.getProperty("mod_version")
+		// Named for the folder, or for the mod id where the mod names its jar that way.
 		def jar = file("../${mod}/build/libs/${mod}-${version}.jar")
+		if (!jar.exists() && props.getProperty("mod_id")) jar = file("../${mod}/build/libs/${props.getProperty("mod_id")}-${version}.jar")
 		if (!jar.exists()) {
 			throw new GradleException("The game tests load ${jar.name}: run `mc-build ${mod}` (or ./gradlew build in ../${mod}) first.")
 		}
