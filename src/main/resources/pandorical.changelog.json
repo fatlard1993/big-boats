@@ -3,6 +3,10 @@
 		"Build a ship out of ordinary blocks, put a helm on it, christen it with a bottle and sail the whole thing away as one vessel."
 	],
 	"versions": {
+		"1.4.1": [
+			"A knick-knack set down on deck is tested to stay aboard through sailing and docking.",
+			"The knick-knack test runs with the rest."
+		],
 		"1.4.0": [
 			"A block another mod draws as something else, such as a Minicraft miniature, is drawn that way while she sails: the miniature shows its little build on deck instead of nothing.",
 			"Her deck at sea is no longer held up by a hidden mob for every block of hull, so a big ship under sail costs the server and every player near her far less. Mobs and dropped items now stand on every block of her, cabins and inner walls included, not only her outer hull. A client too old to walk structures can no longer stand on her at sea, and is told to sit on a cushion as she casts off. Needs Pandorical 15.32.0 or newer."
